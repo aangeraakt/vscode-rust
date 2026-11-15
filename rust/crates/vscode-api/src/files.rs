@@ -10,6 +10,8 @@
 //! are required here or have defaults that answer [`FileSystemErrorCode::Unavailable`]; the
 //! capability bits say which ones work. File-descriptor (`open`/`read`/`write`) and stream APIs
 //! are not part of this contract yet; add them when a provider needs them.
+//!
+//! Build the option structs with `..Default::default()`: fields may be added to them.
 
 use crate::event::Event;
 use crate::lifecycle::Disposable;
@@ -107,6 +109,8 @@ bit_set!(
         FILE_REALPATH = 1 << 18,
         /// Appending writes.
         FILE_APPEND = 1 << 19,
+        /// Renames that never delete the target first or fall back to copying.
+        FILE_ATOMIC_RENAME = 1 << 20,
     }
 );
 
@@ -212,8 +216,23 @@ pub struct WatchOptions {
     pub correlation_id: Option<u64>,
 }
 
-/// Options for `write_file` (`IFileWriteOptions`).
+/// How to perform an atomic write or delete (`IFileAtomicOptions`): through a temporary
+/// sibling named `<name><postfix>`, e.g. `foo.txt.vsctmp`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FileAtomicOptions {
+    /// Suffix of the temporary file.
+    pub postfix: String,
+}
+
+/// Options for `read_file` (`IFileAtomicReadOptions`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FileReadOptions {
+    /// Read atomically, if the provider has `FILE_ATOMIC_READ`.
+    pub atomic: bool,
+}
+
+/// Options for `write_file` (`IFileWriteOptions`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FileWriteOptions {
     /// Create the file if it does not exist.
     pub create: bool,
@@ -221,19 +240,21 @@ pub struct FileWriteOptions {
     pub overwrite: bool,
     /// Unlock a write-locked file first.
     pub unlock: bool,
-    /// Write atomically (via a temp file), if supported.
-    pub atomic: bool,
+    /// Append instead of replacing, if the provider has `FILE_APPEND`.
+    pub append: bool,
+    /// Write atomically through a temporary file, if the provider has `FILE_ATOMIC_WRITE`.
+    pub atomic: Option<FileAtomicOptions>,
 }
 
 /// Options for `delete` (`IFileDeleteOptions`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FileDeleteOptions {
     /// Delete directories with their contents.
     pub recursive: bool,
     /// Move to the trash instead of deleting.
     pub use_trash: bool,
-    /// Delete atomically, if supported.
-    pub atomic: bool,
+    /// Delete atomically, if the provider has `FILE_ATOMIC_DELETE`.
+    pub atomic: Option<FileAtomicOptions>,
 }
 
 /// Options for `rename` and `copy` (`IFileOverwriteOptions`).
@@ -282,7 +303,11 @@ pub trait FileSystemProvider: Send + Sync {
     ) -> BoxFuture<'a, FileResult<()>>;
 
     /// Reads the whole file. Requires [`FileSystemProviderCapabilities::FILE_READ_WRITE`].
-    fn read_file<'a>(&'a self, resource: &'a Uri) -> BoxFuture<'a, FileResult<Vec<u8>>>;
+    fn read_file<'a>(
+        &'a self,
+        resource: &'a Uri,
+        options: FileReadOptions,
+    ) -> BoxFuture<'a, FileResult<Vec<u8>>>;
 
     /// Writes the whole file. Requires [`FileSystemProviderCapabilities::FILE_READ_WRITE`].
     fn write_file<'a>(
@@ -406,7 +431,11 @@ mod tests {
                 Ok(())
             })
         }
-        fn read_file<'a>(&'a self, r: &'a Uri) -> BoxFuture<'a, FileResult<Vec<u8>>> {
+        fn read_file<'a>(
+            &'a self,
+            r: &'a Uri,
+            _: FileReadOptions,
+        ) -> BoxFuture<'a, FileResult<Vec<u8>>> {
             Box::pin(async move {
                 self.files
                     .lock()
@@ -456,8 +485,11 @@ mod tests {
             create: true,
             ..Default::default()
         };
-        block_on(fs.write_file(&a, b"hi", create)).unwrap();
-        assert_eq!(block_on(fs.read_file(&a)).unwrap(), b"hi");
+        block_on(fs.write_file(&a, b"hi", create.clone())).unwrap();
+        assert_eq!(
+            block_on(fs.read_file(&a, FileReadOptions::default())).unwrap(),
+            b"hi"
+        );
         assert_eq!(block_on(fs.stat(&a)).unwrap().size, 2);
         let err = block_on(fs.write_file(&a, b"x", create)).unwrap_err();
         assert_eq!(err.code, FileSystemErrorCode::FileExists);
@@ -495,6 +527,10 @@ mod tests {
         assert!(link_to_dir.contains(FileType::DIRECTORY));
         assert!(!link_to_dir.contains(FileType::FILE));
         assert_eq!(FileSystemProviderCapabilities::FILE_APPEND.0, 524_288);
+        assert_eq!(
+            FileSystemProviderCapabilities::FILE_ATOMIC_RENAME.0,
+            1_048_576
+        );
         assert_eq!(FileChangeType::Deleted as i32, 2);
     }
 }
