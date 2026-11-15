@@ -15,6 +15,7 @@ pub mod files;
 pub mod ids;
 pub mod lifecycle;
 pub mod path;
+pub mod resources;
 pub mod services;
 pub mod uri;
 
