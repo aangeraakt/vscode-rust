@@ -39,6 +39,7 @@ the consuming role picks one up by opening a request PR that names the exact API
 - [ ] 2026-11-15, role 03 (from #8 review): `TextModel` BOM access and indentation options (`getOptions`). PR: #8
 - [ ] 2026-11-15, role 10 (from #5 review): async command handlers for the extension host (the reviewer suggested making `CommandHandler` opaque; the Architect's current plan is a separate `register_async` that leaves `CommandHandler` unchanged; decide in the request); command metadata, aliases, and will/did-execute events; document the empty-id panic on `register`. PR: #5
 - [ ] 2026-11-15, role 08/10 (from #7 review): `FileSystemProvider` `on_did_change_capabilities`, `on_did_watch_error`, watch filters and relative-pattern includes, descriptor and stream APIs, and TypeScript error-code string names for the extension-host bridge. PR: #7
+- [ ] 2026-11-15, requester role 02: draw-layer API (rects, glyph runs, clip, layers; a `DrawList` built by roles 05 and 07 and consumed by the wgpu renderer) in `lathe-platform`, because ADR 0002 makes `platform` define it before roles 05 and 07 depend on it. Sketch and open questions: `rust/crates/platform/DRAW_LAYER.md`. PR: PENDING
 
 ## Blockers
 
