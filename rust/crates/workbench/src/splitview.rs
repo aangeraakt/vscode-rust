@@ -15,6 +15,10 @@
 //! - Constraint changes made from inside `setVisible` (upstream issue #334167) are not delivered
 //!   while the view is being shown or hidden. The host sees them after the call returns.
 
+use vscode_api::event::{Emitter, Event};
+
+use crate::sash::SashState;
+
 #[cfg(test)]
 mod tests;
 
@@ -126,6 +130,18 @@ impl Default for SplitViewOptions {
     }
 }
 
+/// A view and its initial state, for [`SplitView::from_descriptor`]. Port of
+/// `ISplitViewDescriptor`'s entries.
+#[derive(Debug, Clone)]
+pub struct ViewDescriptor<V> {
+    /// The view.
+    pub view: V,
+    /// Its size when visible, or its cached visible size when hidden.
+    pub size: f64,
+    /// Whether the view starts visible.
+    pub visible: bool,
+}
+
 /// A layout container of views separated by sashes. Port of `SplitView`.
 ///
 /// Views are kept in order. Between each pair of views sits one sash, whose state is available
@@ -137,7 +153,14 @@ pub struct SplitView<V: View> {
     content_size: f64,
     proportions: Option<Vec<Option<f64>>>,
     view_items: Vec<ViewItem<V>>,
+    sash_states: Vec<SashState>,
+    sash_drag: Option<SashDrag>,
+    inverse_alt_behavior: bool,
     proportional_layout: bool,
+    start_snapping_enabled: bool,
+    end_snapping_enabled: bool,
+    sash_change: Emitter<usize>,
+    sash_reset: Emitter<usize>,
 }
 
 impl<V: View> SplitView<V> {
@@ -149,8 +172,37 @@ impl<V: View> SplitView<V> {
             content_size: 0.0,
             proportions: None,
             view_items: Vec::new(),
+            sash_states: Vec::new(),
+            sash_drag: None,
+            inverse_alt_behavior: options.inverse_alt_behavior,
             proportional_layout: options.proportional_layout,
+            start_snapping_enabled: true,
+            end_snapping_enabled: true,
+            sash_change: Emitter::new(),
+            sash_reset: Emitter::new(),
         }
+    }
+
+    /// Creates a split view of `size` pixels holding `views` in order, without laying them out.
+    /// Port of the `descriptor` option. Hidden views keep their cached visible size.
+    pub fn from_descriptor(
+        options: SplitViewOptions,
+        size: f64,
+        views: Vec<ViewDescriptor<V>>,
+    ) -> Self {
+        let mut split = Self::new(options);
+        split.size = size;
+        for (index, descriptor) in views.into_iter().enumerate() {
+            let sizing = if descriptor.visible {
+                ViewSize::Pixels(descriptor.size)
+            } else {
+                ViewSize::Sizing(Sizing::Invisible(descriptor.size))
+            };
+            split.do_add_view(descriptor.view, sizing, index, true);
+        }
+        split.content_size = split.items_size();
+        split.save_proportions();
+        split
     }
 
     /// The number of views.
@@ -168,13 +220,61 @@ impl<V: View> SplitView<V> {
         self.content_size
     }
 
+    /// The sum of the views' minimum sizes. Hidden views contribute `0`.
+    pub fn minimum_size(&self) -> f64 {
+        self.view_items.iter().map(ViewItem::minimum_size).sum()
+    }
+
+    /// The sum of the views' maximum sizes, or infinity when there are no views.
+    pub fn maximum_size(&self) -> f64 {
+        if self.view_items.is_empty() {
+            f64::INFINITY
+        } else {
+            self.view_items.iter().map(ViewItem::maximum_size).sum()
+        }
+    }
+
     /// The state of each sash, in order. There is one fewer sash than views.
+    pub fn sash_states(&self) -> &[SashState] {
+        &self.sash_states
+    }
+
     /// Whether snapping at the start of the split view is enabled.
+    pub fn start_snapping_enabled(&self) -> bool {
+        self.start_snapping_enabled
+    }
+
     /// Enables or disables snapping at the start of the split view. Updates sash states.
+    pub fn set_start_snapping_enabled(&mut self, enabled: bool) {
+        if self.start_snapping_enabled != enabled {
+            self.start_snapping_enabled = enabled;
+            self.update_sash_enablement();
+        }
+    }
+
     /// Whether snapping at the end of the split view is enabled.
+    pub fn end_snapping_enabled(&self) -> bool {
+        self.end_snapping_enabled
+    }
+
     /// Enables or disables snapping at the end of the split view. Updates sash states.
+    pub fn set_end_snapping_enabled(&mut self, enabled: bool) {
+        if self.end_snapping_enabled != enabled {
+            self.end_snapping_enabled = enabled;
+            self.update_sash_enablement();
+        }
+    }
+
     /// Fires with the index of a sash when a drag ends. Port of `onDidSashChange`.
+    pub fn on_did_sash_change(&self) -> Event<usize> {
+        self.sash_change.event()
+    }
+
     /// Fires with the index of a sash when it is reset (double clicked). Port of `onDidSashReset`.
+    pub fn on_did_sash_reset(&self) -> Event<usize> {
+        self.sash_reset.event()
+    }
+
     /// The view at `index`.
     ///
     /// # Panics
@@ -196,6 +296,39 @@ impl<V: View> SplitView<V> {
     /// Tells the split view that the view at `index` changed its size constraints, relaying out.
     /// Port of `IView.onDidChange`. `size` is the view's preferred size, or `None` to keep its
     /// current size. Indexes out of bounds are ignored, as upstream does.
+    pub fn view_did_change(&mut self, index: usize, size: Option<f64>) {
+        let Some(item) = self.view_items.get(index) else {
+            return;
+        };
+        let current = item.size;
+        let size = clamp(
+            size.unwrap_or(current),
+            item.minimum_size(),
+            item.maximum_size(),
+        );
+
+        if self.inverse_alt_behavior && index > 0 {
+            // Grow or shrink both sides equally: resize the view before by half the change and
+            // let `resize` clamp it.
+            let delta = ((current - size) / 2.0).floor();
+            self.resize(
+                index - 1,
+                delta,
+                None,
+                Priorities::default(),
+                Limits::default(),
+                Snaps::default(),
+            );
+            self.distribute_empty_space(None);
+            self.layout_views();
+        } else {
+            self.view_items[index].size = size;
+            let (mut low, high) = self.priority_indexes(Some(index));
+            low.push(index);
+            self.relayout(&low, &high, false);
+        }
+    }
+
     /// Adds a view at `index`. When `skip_layout` is true the views are not laid out, so a batch
     /// of additions can be followed by one [`SplitView::layout`].
     ///
@@ -222,28 +355,116 @@ impl<V: View> SplitView<V> {
     ///
     /// # Panics
     /// If `index` is out of bounds.
+    pub fn remove_view(&mut self, index: usize, sizing: Option<Sizing>) -> V {
+        self.checked(index);
+        let original_len = self.len();
+        let sizing = sizing.map(|s| self.resolve_auto(s));
+
+        // The reference view is named before removal, so its index is shifted afterwards.
+        let reference = match sizing {
+            Some(Sizing::Split(reference)) => Some(reference),
+            _ => None,
+        };
+
+        let removed = self.view_items.remove(index);
+
+        if let Some(reference) = reference {
+            if reference < original_len && reference != index {
+                let target = if reference > index {
+                    reference - 1
+                } else {
+                    reference
+                };
+                self.view_items[target].size += removed.size;
+            }
+        }
+
+        if !self.view_items.is_empty() {
+            self.sash_states.remove(index.saturating_sub(1));
+        }
+
+        let distribute = sizing == Some(Sizing::Distribute);
+        self.relayout(&[], &[], distribute);
+        if distribute {
+            self.distribute_view_sizes();
+        }
+
+        removed.view
+    }
+
     /// Removes every view, returning them in order.
+    pub fn remove_all_views(&mut self) -> Vec<V> {
+        let items = std::mem::take(&mut self.view_items);
+        self.sash_states.clear();
+        self.relayout(&[], &[], false);
+        items.into_iter().map(|item| item.view).collect()
+    }
+
     /// Moves the view at `from` so that it ends up at `to`, keeping its size or hidden state.
     ///
     /// # Panics
     /// If `from` is out of bounds.
+    pub fn move_view(&mut self, from: usize, to: usize) {
+        let sizing = match self.view_cached_visible_size(from) {
+            None => ViewSize::Pixels(self.view_size(from)),
+            Some(cached) => ViewSize::Sizing(Sizing::Invisible(cached)),
+        };
+        let view = self.remove_view(from, None);
+        self.add_view(view, sizing, to, false);
+    }
+
     /// Swaps the views at `from` and `to`, exchanging their visible sizes. A swap with itself
     /// does nothing.
     ///
     /// # Panics
     /// If either index is out of bounds.
+    pub fn swap_views(&mut self, from: usize, to: usize) {
+        if from == to {
+            self.checked(from);
+            return;
+        }
+        if from > to {
+            return self.swap_views(to, from);
+        }
+
+        let from_size = self.view_size(from);
+        let to_size = self.view_size(to);
+        let to_view = self.remove_view(to, None);
+        let from_view = self.remove_view(from, None);
+
+        self.add_view(to_view, from_size, from, false);
+        self.add_view(from_view, to_size, to, false);
+    }
+
     /// Whether the view at `index` is visible.
     ///
     /// # Panics
     /// If `index` is out of bounds.
+    pub fn is_view_visible(&self, index: usize) -> bool {
+        self.view_items[self.checked(index)].visible()
+    }
+
     /// Shows or hides the view at `index`. Hiding caches its size, showing restores it.
     ///
     /// # Panics
     /// If `index` is out of bounds.
+    pub fn set_view_visible(&mut self, index: usize, visible: bool) {
+        let index = self.checked(index);
+        self.view_items[index].set_visible(visible, None);
+
+        self.distribute_empty_space(Some(index));
+        self.layout_views();
+        self.save_proportions();
+    }
+
     /// The visible size the view had before it was hidden, or `None` when it is visible.
     ///
     /// # Panics
     /// If `index` is out of bounds.
+    pub fn view_cached_visible_size(&self, index: usize) -> Option<f64> {
+        self.view_items[self.checked(index)].cached_visible_size
+    }
+
     /// Lays out the split view at `size` pixels. Views keep their proportions when proportional
     /// layout is on. `context` is passed to every view's [`View::layout`].
     pub fn layout(&mut self, size: f64, context: Option<V::Context>) {
@@ -283,10 +504,13 @@ impl<V: View> SplitView<V> {
             self.resize(
                 last,
                 size - previous_size,
+                None,
                 Priorities {
                     low: &low,
                     high: &high,
                 },
+                Limits::default(),
+                Snaps::default(),
             );
         }
 
@@ -296,7 +520,34 @@ impl<V: View> SplitView<V> {
 
     /// Resizes the view at `index` to `size`, taking space from or giving it to the others.
     /// Out-of-bounds indexes are ignored, as upstream does.
+    pub fn resize_view(&mut self, index: usize, size: f64) {
+        let Some(item) = self.view_items.get(index) else {
+            return;
+        };
+        let size = js_round(size);
+        let size = clamp(
+            size,
+            item.minimum_size(),
+            item.maximum_size().min(self.size),
+        );
+
+        let (mut low, high) = self.priority_indexes(Some(index));
+        low.push(index);
+        self.view_items[index].size = size;
+        self.relayout(&low, &high, false);
+    }
+
     /// Whether every other view is at its minimum size. Out-of-bounds indexes return `false`.
+    pub fn is_view_expanded(&self, index: usize) -> bool {
+        if index >= self.len() {
+            return false;
+        }
+        self.view_items
+            .iter()
+            .enumerate()
+            .all(|(i, item)| i == index || item.size <= item.minimum_size())
+    }
+
     /// Distributes the whole split view size evenly among the views that can flex.
     pub fn distribute_view_sizes(&mut self) {
         let flexible: Vec<usize> = self
@@ -330,13 +581,98 @@ impl<V: View> SplitView<V> {
     ///
     /// # Panics
     /// If `index` is not a sash index.
+    pub fn sash_start(&mut self, index: usize, start: f64, alt: bool) {
+        assert!(index < self.sash_states.len(), "index out of bounds");
+        self.sash_drag = Some(self.sash_drag_from(index, start, alt));
+    }
+
     /// Continues the active drag to position `current`. Does nothing without an active drag.
+    pub fn sash_change(&mut self, current: f64) {
+        let Some(drag) = self.sash_drag.as_mut() else {
+            return;
+        };
+        drag.current = current;
+        let index = drag.index;
+        let delta = current - drag.start;
+        let sizes = drag.sizes.clone();
+        let alt = drag.alt;
+        let limits = drag.limits;
+        let snaps = drag.snaps;
+
+        let new_delta = self.resize(
+            index,
+            delta,
+            Some(sizes),
+            Priorities::default(),
+            limits,
+            snaps,
+        );
+
+        if alt {
+            let is_last = index + 1 == self.sash_states.len();
+            let new_sizes = self.sizes();
+            let view_index = if is_last { index } else { index + 1 };
+            let item = &self.view_items[view_index];
+            let limits = Limits {
+                min: item.size - item.maximum_size(),
+                max: item.size - item.minimum_size(),
+            };
+            let resize_index = if is_last {
+                index.checked_sub(1)
+            } else {
+                Some(index + 1)
+            };
+
+            if let Some(resize_index) = resize_index {
+                self.resize(
+                    resize_index,
+                    -new_delta,
+                    Some(new_sizes),
+                    Priorities::default(),
+                    limits,
+                    Snaps::default(),
+                );
+            }
+        }
+
+        self.distribute_empty_space(None);
+        self.layout_views();
+    }
+
     /// Ends the drag on the sash at `index`, fires [`SplitView::on_did_sash_change`] and saves
     /// the proportions.
+    pub fn sash_end(&mut self, index: usize) {
+        self.sash_change.fire(index);
+        self.sash_drag = None;
+        self.save_proportions();
+    }
+
     /// Reports that Alt was pressed or released during a drag. The drag restarts from the current
     /// position with the new Alt behaviour, as upstream does. Does nothing without a drag.
+    pub fn set_sash_alt(&mut self, alt: bool) {
+        if let Some(drag) = &self.sash_drag {
+            let (index, current) = (drag.index, drag.current);
+            self.sash_drag = Some(self.sash_drag_from(index, current, alt));
+        }
+    }
+
     /// Reports a double click on the sash at `index`. Fires [`SplitView::on_did_sash_reset`]
     /// unless the reset would land on a hidden view that a snap should keep hidden.
+    pub fn reset_sash(&mut self, index: usize) {
+        let up = up_indexes(index);
+        let down = down_indexes(index, self.len());
+        let snap_before = self.find_first_snap_index(&up);
+        let snap_after = self.find_first_snap_index(&down);
+
+        if snap_before.is_some_and(|i| !self.view_items[i].visible())
+            || snap_after.is_some_and(|i| !self.view_items[i].visible())
+        {
+            return;
+        }
+
+        self.sash_reset.fire(index);
+    }
+
     fn checked(&self, index: usize) -> usize {
         assert!(index < self.len(), "index out of bounds");
         index
@@ -401,6 +737,11 @@ impl<V: View> SplitView<V> {
             },
         );
 
+        if self.len() > 1 {
+            self.sash_states
+                .insert(index.saturating_sub(1), SashState::Disabled);
+        }
+
         if !skip_layout {
             let high = match sizing {
                 ViewSize::Sizing(Sizing::Split(reference)) => vec![reference],
@@ -422,7 +763,14 @@ impl<V: View> SplitView<V> {
         let delta = self.size - self.items_size();
 
         if let Some(last) = self.len().checked_sub(1) {
-            self.resize(last, delta, Priorities { low, high });
+            self.resize(
+                last,
+                delta,
+                None,
+                Priorities { low, high },
+                Limits::default(),
+                Snaps::default(),
+            );
         }
         self.distribute_empty_space(None);
 
@@ -438,13 +786,24 @@ impl<V: View> SplitView<V> {
     }
 
     /// Moves `delta` pixels of space across the views around the sash at `index`, giving the
-    /// neighbours in priority order.
-    fn resize(&mut self, index: usize, mut delta: f64, priorities: Priorities<'_>) {
+    /// neighbours in priority order, and returns the delta actually applied.
+    ///
+    /// `sizes` is the snapshot to read sizes from (the current sizes when `None`). Snaps may
+    /// hide a view, in which case the call repeats with the same snapshot and no snaps.
+    fn resize(
+        &mut self,
+        index: usize,
+        mut delta: f64,
+        sizes: Option<Vec<f64>>,
+        priorities: Priorities<'_>,
+        limits: Limits,
+        snaps: Snaps,
+    ) -> f64 {
         if index >= self.len() {
-            return;
+            return 0.0;
         }
 
-        let sizes = self.sizes();
+        let sizes = sizes.unwrap_or_else(|| self.sizes());
         let (up, down) = self.resize_order(index, priorities);
 
         let min_delta_up: f64 = up
@@ -467,8 +826,37 @@ impl<V: View> SplitView<V> {
                     .sum(),
             )
         };
-        let min_delta = min_delta_up.max(min_delta_down);
-        let max_delta = max_delta_down.min(max_delta_up);
+        let min_delta = min_delta_up.max(min_delta_down).max(limits.min);
+        let max_delta = max_delta_down.min(max_delta_up).min(limits.max);
+
+        let mut snapped = false;
+
+        if let Some(snap) = snaps.before {
+            let visible = delta >= snap.limit_delta;
+            let view = &mut self.view_items[snap.index];
+            snapped = visible != view.visible();
+            view.set_visible(visible, Some(snap.size));
+        }
+
+        if !snapped {
+            if let Some(snap) = snaps.after {
+                let visible = delta < snap.limit_delta;
+                let view = &mut self.view_items[snap.index];
+                snapped = visible != view.visible();
+                view.set_visible(visible, Some(snap.size));
+            }
+        }
+
+        if snapped {
+            return self.resize(
+                index,
+                delta,
+                Some(sizes),
+                priorities,
+                limits,
+                Snaps::default(),
+            );
+        }
 
         delta = clamp(delta, min_delta, max_delta);
 
@@ -495,6 +883,8 @@ impl<V: View> SplitView<V> {
             delta_down += size - sizes[i];
             item.size = size;
         }
+
+        delta
     }
 
     /// The order in which `resize` visits the views before and after the sash at `index`.
@@ -553,6 +943,8 @@ impl<V: View> SplitView<V> {
                 .layout(item.size, offset, self.layout_context.as_ref());
             offset += item.size;
         }
+
+        self.update_sash_enablement();
     }
 
     fn save_proportions(&mut self) {
@@ -569,6 +961,86 @@ impl<V: View> SplitView<V> {
         }
     }
 
+    /// Derives every sash's state from the views around it. Port of `updateSashEnablement`.
+    fn update_sash_enablement(&mut self) {
+        let collapses: Vec<bool> = self
+            .view_items
+            .iter()
+            .map(|item| item.size - item.minimum_size() > 0.0)
+            .collect();
+        let expands: Vec<bool> = self
+            .view_items
+            .iter()
+            .map(|item| item.maximum_size() - item.size > 0.0)
+            .collect();
+        let collapses_down = running_or(&collapses, false);
+        let expands_down = running_or(&expands, false);
+        let collapses_up = running_or(&collapses, true);
+        let expands_up = running_or(&expands, true);
+
+        let mut position = 0.0;
+        for index in 0..self.sash_states.len() {
+            position += self.view_items[index].size;
+
+            let min = !(collapses_down[index] && expands_up[index + 1]);
+            let max = !(expands_down[index] && collapses_up[index + 1]);
+
+            let state = if min && max {
+                let snapped_before = self
+                    .find_first_snap_index(&up_indexes(index))
+                    .is_some_and(|i| !self.view_items[i].visible());
+                let snapped_after = self
+                    .find_first_snap_index(&down_indexes(index, self.len()))
+                    .is_some_and(|i| !self.view_items[i].visible());
+
+                if snapped_before
+                    && collapses_up[index]
+                    && (position > 0.0 || self.start_snapping_enabled)
+                {
+                    SashState::AtMinimum
+                } else if snapped_after
+                    && collapses_down[index]
+                    && (position < self.content_size || self.end_snapping_enabled)
+                {
+                    SashState::AtMaximum
+                } else {
+                    SashState::Disabled
+                }
+            } else if min {
+                SashState::AtMinimum
+            } else if max {
+                SashState::AtMaximum
+            } else {
+                SashState::Enabled
+            };
+
+            self.sash_states[index] = state;
+        }
+    }
+
+    /// The first view in `indexes` that snaps, preferring visible views. Hidden views count only
+    /// when no visible view before them still has room to shrink. Port of `findFirstSnapIndex`.
+    fn find_first_snap_index(&self, indexes: &[usize]) -> Option<usize> {
+        for &index in indexes {
+            let item = &self.view_items[index];
+            if item.visible() && item.snap() {
+                return Some(index);
+            }
+        }
+
+        for &index in indexes {
+            let item = &self.view_items[index];
+            if item.visible() && item.maximum_size() - item.minimum_size() > 0.0 {
+                return None;
+            }
+            if !item.visible() && item.snap() {
+                return Some(index);
+            }
+        }
+
+        None
+    }
+
     fn are_views_distributed(&self) -> bool {
         let mut range: Option<(f64, f64)> = None;
         for item in &self.view_items {
@@ -582,6 +1054,95 @@ impl<V: View> SplitView<V> {
         }
         true
     }
+
+    fn sash_drag_from(&self, index: usize, start: f64, alt: bool) -> SashDrag {
+        let sizes = self.sizes();
+        let alt = alt != self.inverse_alt_behavior;
+        let mut limits = Limits::default();
+        let mut snaps = Snaps::default();
+
+        if alt {
+            // Alt resizes the views on both sides of the sash equally. The last sash has no view
+            // after it to borrow from, so the view before it moves the other way.
+            if index + 1 == self.sash_states.len() {
+                let item = &self.view_items[index];
+                limits = Limits {
+                    min: (item.minimum_size() - item.size) / 2.0,
+                    max: (item.maximum_size() - item.size) / 2.0,
+                };
+            } else {
+                let item = &self.view_items[index + 1];
+                limits = Limits {
+                    min: (item.size - item.maximum_size()) / 2.0,
+                    max: (item.size - item.minimum_size()) / 2.0,
+                };
+            }
+        } else {
+            let up = up_indexes(index);
+            let down = down_indexes(index, self.len());
+            let min_delta_up: f64 = up
+                .iter()
+                .map(|&i| self.view_items[i].minimum_size() - sizes[i])
+                .sum();
+            let max_delta_up: f64 = up
+                .iter()
+                .map(|&i| self.view_items[i].view_maximum_size() - sizes[i])
+                .sum();
+            let (max_delta_down, min_delta_down) = if down.is_empty() {
+                (f64::INFINITY, f64::NEG_INFINITY)
+            } else {
+                (
+                    down.iter()
+                        .map(|&i| sizes[i] - self.view_items[i].minimum_size())
+                        .sum(),
+                    down.iter()
+                        .map(|&i| sizes[i] - self.view_items[i].view_maximum_size())
+                        .sum(),
+                )
+            };
+            // Upstream keeps the unbounded limits above for a non-Alt drag; these bounds only
+            // place the snap thresholds.
+            let min_delta = min_delta_up.max(min_delta_down);
+            let max_delta = max_delta_down.min(max_delta_up);
+
+            snaps.before = self.find_first_snap_index(&up).map(|i| {
+                let item = &self.view_items[i];
+                let half = (item.view_minimum_size() / 2.0).floor();
+                Snap {
+                    index: i,
+                    limit_delta: if item.visible() {
+                        min_delta - half
+                    } else {
+                        min_delta + half
+                    },
+                    size: item.size,
+                }
+            });
+            snaps.after = self.find_first_snap_index(&down).map(|i| {
+                let item = &self.view_items[i];
+                let half = (item.view_minimum_size() / 2.0).floor();
+                Snap {
+                    index: i,
+                    limit_delta: if item.visible() {
+                        max_delta + half
+                    } else {
+                        max_delta - half
+                    },
+                    size: item.size,
+                }
+            });
+        }
+
+        SashDrag {
+            index,
+            start,
+            current: start,
+            sizes,
+            limits,
+            alt,
+            snaps,
+        }
+    }
 }
 
 /// One view and its sizing state.
@@ -594,6 +1155,24 @@ struct ViewItem<V: View> {
 impl<V: View> ViewItem<V> {
     fn visible(&self) -> bool {
         self.cached_visible_size.is_none()
+    }
+
+    /// Shows or hides the item. Hiding caches `size` (or the given size) and collapses to zero.
+    fn set_visible(&mut self, visible: bool, size: Option<f64>) {
+        if visible == self.visible() {
+            return;
+        }
+
+        if visible {
+            let cached = self.cached_visible_size.unwrap_or(0.0);
+            self.size = clamp(cached, self.view.minimum_size(), self.view.maximum_size());
+            self.cached_visible_size = None;
+        } else {
+            self.cached_visible_size = Some(size.unwrap_or(self.size));
+            self.size = 0.0;
+        }
+
+        self.view.set_visible(visible);
     }
 
     /// The view's minimum size, or `0` while hidden.
@@ -614,8 +1193,22 @@ impl<V: View> ViewItem<V> {
         }
     }
 
+    /// The view's own minimum size, even while hidden.
+    fn view_minimum_size(&self) -> f64 {
+        self.view.minimum_size()
+    }
+
+    /// The view's own maximum size, even while hidden.
+    fn view_maximum_size(&self) -> f64 {
+        self.view.maximum_size()
+    }
+
     fn priority(&self) -> LayoutPriority {
         self.view.priority()
+    }
+
+    fn snap(&self) -> bool {
+        self.view.snap()
     }
 }
 
@@ -624,6 +1217,47 @@ impl<V: View> ViewItem<V> {
 struct Priorities<'a> {
     low: &'a [usize],
     high: &'a [usize],
+}
+
+/// Extra bounds on the delta of a resize, used by Alt-drags.
+#[derive(Clone, Copy)]
+struct Limits {
+    min: f64,
+    max: f64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            min: f64::NEG_INFINITY,
+            max: f64::INFINITY,
+        }
+    }
+}
+
+/// A view that a drag may hide, once the delta crosses `limit_delta`.
+#[derive(Clone, Copy)]
+struct Snap {
+    index: usize,
+    limit_delta: f64,
+    size: f64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Snaps {
+    before: Option<Snap>,
+    after: Option<Snap>,
+}
+
+/// The state of an active sash drag. Port of `ISashDragState`.
+struct SashDrag {
+    index: usize,
+    start: f64,
+    current: f64,
+    sizes: Vec<f64>,
+    limits: Limits,
+    alt: bool,
+    snaps: Snaps,
 }
 
 /// Indexes from `index` back to the first view, nearest first.
@@ -650,6 +1284,26 @@ fn push_to_end(values: &mut Vec<usize>, value: usize) {
         values.remove(position);
         values.push(value);
     }
+}
+
+/// Prefix (or, reversed, suffix) OR of `flags`: entry `i` is true when any flag at or before
+/// (or at or after) `i` is true.
+fn running_or(flags: &[bool], from_end: bool) -> Vec<bool> {
+    let mut result = Vec::with_capacity(flags.len());
+    let mut previous = false;
+    if from_end {
+        for &flag in flags.iter().rev() {
+            previous = flag || previous;
+            result.push(previous);
+        }
+        result.reverse();
+    } else {
+        for &flag in flags {
+            previous = flag || previous;
+            result.push(previous);
+        }
+    }
+    result
 }
 
 /// Clamps `value` into `[min, max]`. Port of `clamp` in `common/numbers.ts`.
