@@ -4,3 +4,4 @@
 //! changes (splices, events) that a view layer consumes.
 
 pub mod list;
+pub mod tree;
