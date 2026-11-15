@@ -174,6 +174,13 @@ struct LocalInner<T> {
 /// The owner side of a UI-thread event: fires values to single-threaded subscribers.
 ///
 /// Not `Send`: create and fire it on the UI thread. Same delivery semantics as [`Emitter`].
+///
+/// The owner must not hold a `borrow_mut` of state that listeners read when it calls [`fire`],
+/// because a listener's `borrow` would then panic (ADR 0007). A listener that captures the object
+/// owning this emitter or its [`LocalEvent`] must capture a `Weak` (`std::rc::Weak`), not an `Rc`:
+/// an `Rc` cycle keeps both alive forever. [`Emitter`] has the same risk with `Arc`.
+///
+/// [`fire`]: LocalEmitter::fire
 pub struct LocalEmitter<T: 'static> {
     inner: Rc<RefCell<LocalInner<T>>>,
 }
@@ -328,12 +335,11 @@ mod tests {
         let seen = log();
         let late = Arc::new(Mutex::new(Vec::<Disposable>::new()));
         let (em, s, l) = (emitter.clone(), seen.clone(), late.clone());
-        let _d = emitter.subscribe(move |e| {
+        let _d = emitter.subscribe(move |_| {
             let s = s.clone();
             l.lock()
                 .unwrap()
                 .push(em.subscribe(move |e2| s.lock().unwrap().push(format!("late{e2}"))));
-            let _ = e;
         });
         emitter.fire(1);
         assert!(seen.lock().unwrap().is_empty());
@@ -422,11 +428,10 @@ mod tests {
         let seen = local_log();
         let late = Rc::new(RefCell::new(Vec::<LocalDisposable>::new()));
         let (em, s, l) = (emitter.clone(), seen.clone(), late.clone());
-        let _d = emitter.subscribe(move |e| {
+        let _d = emitter.subscribe(move |_| {
             let s = s.clone();
             l.borrow_mut()
                 .push(em.subscribe(move |e2| s.borrow_mut().push(format!("late{e2}"))));
-            let _ = e;
         });
         emitter.fire(1);
         assert!(seen.borrow().is_empty());
@@ -490,7 +495,7 @@ mod tests {
     #[test]
     fn local_listener_reads_owner_state_when_owner_releases_borrow_before_fire() {
         // The fire-after-apply rule (ADR 0007): the owner mutates its state, releases the borrow,
-        // then fires. A listener holding a shared handle reads the new state from inside `fire`.
+        // then fires. A UI-thread listener holding a shared handle reads the new state in `fire`.
         struct Model {
             text: String,
         }
