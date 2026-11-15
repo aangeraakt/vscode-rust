@@ -22,6 +22,9 @@ use std::fmt;
 use crate::path::{posix, win32};
 use crate::uri::{Uri, UriError};
 
+#[cfg(test)]
+mod tests;
+
 /// The path separator of the host platform (`paths.sep`).
 pub const HOST_SEPARATOR: char = if cfg!(windows) { '\\' } else { '/' };
 
