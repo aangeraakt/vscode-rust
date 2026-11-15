@@ -10,6 +10,7 @@ use vscode_api::editor::EndOfLineSequence;
 
 use crate::piece::{StringBuffer, normalize_breaks};
 use crate::piece_tree::PieceTree;
+use crate::text_buffer::PieceTreeTextBuffer;
 
 /// The byte order mark, as a `char` (`UTF8_BOM_CHARACTER`).
 const BOM: char = '\u{feff}';
@@ -143,9 +144,15 @@ impl TextBufferFactory {
         &self.bom
     }
 
-    /// Builds the tree (`create`). The terminator is the majority one in the input; when the
-    /// input has no line breaks, `default_eol` is used. With `normalize_eol`, every break is
-    /// rewritten to the chosen terminator and the tree is marked as normalized.
+    /// Builds the text buffer, keeping the BOM (`create`).
+    pub fn create_text_buffer(self, default_eol: EndOfLineSequence) -> PieceTreeTextBuffer {
+        let bom = self.bom.clone();
+        PieceTreeTextBuffer::new(self.create(default_eol), bom)
+    }
+
+    /// Builds the tree. The terminator is the majority one in the input; when the input has no
+    /// line breaks, `default_eol` is used. With `normalize_eol`, every break is rewritten to the
+    /// chosen terminator and the tree is marked as normalized.
     pub fn create(self, default_eol: EndOfLineSequence) -> PieceTree {
         let eol = self.eol(default_eol);
         let mut chunks = self.chunks;

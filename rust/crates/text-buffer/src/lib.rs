@@ -14,9 +14,14 @@ mod builder;
 mod piece;
 mod piece_tree;
 mod rbtree;
+mod text_buffer;
 
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod text_buffer_tests;
+
 pub use builder::{TextBufferBuilder, TextBufferFactory};
 pub use piece_tree::PieceTree;
+pub use text_buffer::{ApplyEditsResult, PieceTreeTextBuffer};

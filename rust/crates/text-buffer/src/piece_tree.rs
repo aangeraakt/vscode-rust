@@ -81,6 +81,13 @@ impl PieceTree {
         tree
     }
 
+    /// Rewrites every line break to `eol` and makes it the terminator of the tree (`setEOL`).
+    /// The tree is rebuilt as one buffer: the upstream chunking only affects memory layout.
+    pub fn set_eol(&mut self, eol: EndOfLineSequence) {
+        let text = normalize_breaks(&self.raw_content(), eol.as_str());
+        *self = PieceTree::new(vec![StringBuffer::new(text)], eol, true);
+    }
+
     /// The terminator the tree was built with (`getEOL`).
     pub fn eol(&self) -> EndOfLineSequence {
         self.eol
