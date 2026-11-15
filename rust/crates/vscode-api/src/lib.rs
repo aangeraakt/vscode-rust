@@ -7,12 +7,14 @@
 //! Each module cites the TypeScript source it was ported from. Paths are relative to the
 //! repository root at the reference commit pinned in `docs/decisions/0001-project-name-and-reference.md`.
 
+pub mod commands;
 pub mod event;
 pub mod ids;
 pub mod lifecycle;
 pub mod services;
 pub mod uri;
 
+pub use commands::{CommandError, CommandHandler, CommandRegistry, CommandResult};
 pub use event::{Emitter, Event};
 pub use ids::{CommandId, IdGenerator, LanguageId};
 pub use lifecycle::{Disposable, DisposableStore, LifecyclePhase, ShutdownReason};
