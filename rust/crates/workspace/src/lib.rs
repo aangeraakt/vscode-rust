@@ -5,4 +5,5 @@
 //! pinned reference commit is the behavioral reference.
 
 pub mod comparers;
+pub mod filters;
 pub mod strings;
