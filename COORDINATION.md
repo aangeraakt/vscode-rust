@@ -23,14 +23,22 @@ automatically.
 
 ## Phase status
 
-- Phase 0 (Architecture): in progress. Feature work starts when the `vscode-api` crate has
-  merged with an approval.
+- Phase 0 (Architecture): **done** 2026-11-15. ADRs, PORT_MAP and `vscode-api` (#1 to #8) are merged;
+  #6 to #8 merged with non-author approvals.
+- Phase 1: open. Each role claims one PORT_MAP row by PR; see `docs/HANDOFF.md` for the first
+  task of each role. Role 10's CI workflow comes first.
 
 ## Open interface requests
 
 Format: `- [ ] YYYY-MM-DD, requester role NN: <what> in <module>, because <why>. PR: <link>`
 
-_None._
+These were deferred during the Phase 0 reviews. They are all additive unless marked otherwise;
+the consuming role picks one up by opening a request PR that names the exact API.
+
+- [ ] 2026-11-15, role 04/05 (from #8 review): `event` listeners must be `Send + Sync`; UI-thread view models may need a `!Send` local emitter, and must be able to read the model from inside a change listener. Decide before cursor work starts. PR: #8
+- [ ] 2026-11-15, role 03 (from #8 review): `TextModel` BOM access and indentation options (`getOptions`). PR: #8
+- [ ] 2026-11-15, role 10 (from #5 review): async command handlers for the extension host (the reviewer suggested making `CommandHandler` opaque; the Architect's current plan is a separate `register_async` that leaves `CommandHandler` unchanged; decide in the request); command metadata, aliases, and will/did-execute events; document the empty-id panic on `register`. PR: #5
+- [ ] 2026-11-15, role 08/10 (from #7 review): `FileSystemProvider` `on_did_change_capabilities`, `on_did_watch_error`, watch filters and relative-pattern includes, descriptor and stream APIs, and TypeScript error-code string names for the extension-host bridge. PR: #7
 
 ## Blockers
 
@@ -42,3 +50,5 @@ _None._
 
 - 2026-11-15, 01: Phase 0 started. ADRs 0001–0006 and ARCHITECTURE.md written; PORT_MAP and `vscode-api` next.
 - 2026-11-15, 02–10: reading reference source for their areas; waiting on `vscode-api` approval.
+- 2026-11-15, 01: Phase 0 done; `vscode-api` merged (#3 to #8). Next: rows "Resource and path helpers", "Async primitives (throttler, delayer, cancellation)".
+- 2026-11-15, 02 to 10: Phase 1 unblocked. First tasks are in `docs/HANDOFF.md`; role 10 starts with CI.
