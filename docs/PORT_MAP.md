@@ -50,7 +50,7 @@ drop through a COORDINATION.md request.
 | Actions and menus registry | `src/vs/platform/actions/`, `action/` | workbench | 07 | M2 | not started |
 | Lifecycle phases | `src/vs/workbench/services/lifecycle/common/lifecycle.ts` (enums) | vscode-api | 01 | P0 | done (tests) |
 | Lifecycle service (phase events, shutdown veto) | `src/vs/platform/lifecycle/`, `src/vs/workbench/services/lifecycle/` | lathe | 01 | M1 | not started |
-| Window, native host, auxiliary windows | `src/vs/platform/{window,windows,native,auxiliaryWindow}/` | platform | 02 | M1 | not started |
+| Window, native host, auxiliary windows | `src/vs/platform/{window,windows,native,auxiliaryWindow}/` | platform | 02 | M1 | in progress (role 02, PR #15) |
 | Clipboard | `src/vs/platform/clipboard/` | platform | 02 | M1 | not started |
 | Dialogs | `src/vs/platform/dialogs/` | platform | 02 | M1 | not started |
 | Menubar (native) | `src/vs/platform/menubar/` | platform | 02 | M2 | not started |
