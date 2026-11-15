@@ -349,6 +349,18 @@ fn html_closing_tag_proposal_filtered_out_38880() {
 
 #[rustfmt::skip]
 #[test]
+fn fuzzy_score_graceful() {
+    assert_matches("rlut", "result", None, f::fuzzy_score, (0, 0, false));
+    assert_matches("rlut", "result", Some("^res^u^l^t"), f::fuzzy_score_graceful, (0, 0, false));
+    assert_matches("cno", "console", Some("^co^ns^ole"), f::fuzzy_score, (0, 0, false));
+    assert_matches("cno", "console", Some("^co^ns^ole"), f::fuzzy_score_graceful, (0, 0, false));
+    assert_matches("cno", "console", Some("^c^o^nsole"), f::fuzzy_score_graceful_aggressive, (0, 0, false));
+    assert_matches("cno", "co_new", Some("^c^o_^new"), f::fuzzy_score_graceful, (0, 0, false));
+    assert_matches("cno", "co_new", Some("^c^o_^new"), f::fuzzy_score_graceful_aggressive, (0, 0, false));
+}
+
+#[rustfmt::skip]
+#[test]
 fn list_highlight_filter_not_all_characters_from_match_are_highlighterd_66923() {
     assert_matches("foo", "barbarbarbarbarbarbarbarbarbarbarbarbarbarbarbar_foo", Some("barbarbarbarbarbarbarbarbarbarbarbarbarbarbarbar_^f^o^o"), f::fuzzy_score, (0, 0, false));
 }
@@ -366,6 +378,28 @@ fn autocompletion_is_matched_against_truncated_filter_text_to_54_characters_7413
 fn wrong_highlight_after_emoji_113404() {
     assert_matches("di", "✨div classname=\"\"></div>", Some("✨^d^iv classname=\"\"></div>"), f::fuzzy_score, (0, 0, false));
     assert_matches("di", "adiv classname=\"\"></div>", Some("adiv classname=\"\"></^d^iv>"), f::fuzzy_score, (0, 0, false));
+}
+
+#[rustfmt::skip]
+#[test]
+fn suggestion_is_not_highlighted_85826() {
+    assert_matches("SemanticTokens", "SemanticTokensEdits", Some("^S^e^m^a^n^t^i^c^T^o^k^e^n^sEdits"), f::fuzzy_score, (0, 0, false));
+    assert_matches("SemanticTokens", "SemanticTokensEdits", Some("^S^e^m^a^n^t^i^c^T^o^k^e^n^sEdits"), f::fuzzy_score_graceful_aggressive, (0, 0, false));
+}
+
+#[rustfmt::skip]
+#[test]
+fn intelli_sense_completion_not_correctly_highlighting_text_in_front_of_cursor_115250() {
+    assert_matches("lo", "log", Some("^l^og"), f::fuzzy_score, (0, 0, false));
+    assert_matches(".lo", "log", Some("^l^og"), f::any_score, (0, 0, false));
+    assert_matches(".", "log", Some("log"), f::any_score, (0, 0, false));
+}
+
+#[rustfmt::skip]
+#[test]
+fn any_score_should_not_require_a_strong_first_match() {
+    assert_matches("bar", "foobAr", Some("foo^b^A^r"), f::any_score, (0, 0, false));
+    assert_matches("bar", "foobar", Some("foo^b^a^r"), f::any_score, (0, 0, false));
 }
 
 #[rustfmt::skip]
