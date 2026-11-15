@@ -102,7 +102,7 @@ impl StandardAutoClosingPairConditional {
         match &self.before_text {
             None => true,
             // A runtime regex failure counts as no match; see the module docs.
-            Some(regex) => regex.is_match(text).unwrap_or(false),
+            Some(regex) => regex_test(regex, text),
         }
     }
 
@@ -152,6 +152,63 @@ pub struct LanguageConfiguration {
     pub auto_close_before: Option<String>,
     /// The legacy doc comment pair.
     pub doc_comment: Option<DocComment>,
+    /// Rules that change indentation after Enter.
+    pub on_enter_rules: Option<Vec<OnEnterRule>>,
+}
+
+/// What the editor does with indentation (`IndentAction`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndentAction {
+    /// Keep the indentation.
+    None,
+    /// Indent the new line.
+    Indent,
+    /// Indent the new line and put the closing text on its own line.
+    IndentOutdent,
+    /// Outdent the new line.
+    Outdent,
+}
+
+/// The effect of an on-enter rule (`EnterAction`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnterAction {
+    /// The indentation change.
+    pub indent_action: IndentAction,
+    /// Text to insert after the cursor, if any.
+    pub append_text: Option<String>,
+    /// Number of characters to remove before the cursor, if any.
+    pub remove_text: Option<u32>,
+}
+
+impl EnterAction {
+    /// An action that only changes indentation.
+    pub fn new(indent_action: IndentAction) -> Self {
+        Self {
+            indent_action,
+            append_text: None,
+            remove_text: None,
+        }
+    }
+}
+
+/// A rule that matches the text around the cursor on Enter (`OnEnterRule`). Each present regex
+/// must match its text; an absent one matches anything.
+#[derive(Clone, Debug)]
+pub struct OnEnterRule {
+    /// Must match the text before the cursor on the line.
+    pub before_text: Regex,
+    /// Must match the text after the cursor on the line, if set.
+    pub after_text: Option<Regex>,
+    /// Must match the previous line, if set.
+    pub previous_line_text: Option<Regex>,
+    /// The action when the rule matches.
+    pub action: EnterAction,
+}
+
+/// Whether `regex` matches `text` (`RegExp.test`). A runtime failure of the engine (its
+/// backtracking limit) counts as no match; see the module docs.
+pub(crate) fn regex_test(regex: &Regex, text: &str) -> bool {
+    regex.is_match(text).unwrap_or(false)
 }
 
 #[cfg(test)]
