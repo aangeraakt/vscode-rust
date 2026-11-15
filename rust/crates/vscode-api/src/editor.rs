@@ -50,14 +50,12 @@ impl Position {
     }
 }
 
-/// A range between two positions (`Range`). `start <= end` always holds; constructors swap the
-/// ends when needed, as the TypeScript constructor does.
+/// A range between two positions (`Range`). `start <= end` always holds: the fields are private
+/// and the constructors swap the ends when needed, as the TypeScript constructor does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Range {
-    /// The start position (inclusive).
-    pub start: Position,
-    /// The end position (exclusive for text; the column after the last character).
-    pub end: Position,
+    start: Position,
+    end: Position,
 }
 
 impl Range {
@@ -76,6 +74,16 @@ impl Range {
         } else {
             Self { start: b, end: a }
         }
+    }
+
+    /// The start position (inclusive).
+    pub fn start(self) -> Position {
+        self.start
+    }
+
+    /// The end position (exclusive for text: the column after the last character).
+    pub fn end(self) -> Position {
+        self.end
     }
 
     /// An empty range at `position`.
@@ -270,6 +278,8 @@ pub struct ModelContentChangedEvent {
     pub is_redoing: bool,
     /// The whole content was replaced (`setValue`).
     pub is_flush: bool,
+    /// The change only replaced line terminators (`setEOL`).
+    pub is_eol_change: bool,
 }
 
 /// The text of one document with VS Code's line and offset semantics (an `ITextModel` subset).
@@ -313,16 +323,14 @@ pub trait TextModel {
     fn offset_at(&self, position: Position) -> u32;
     /// The position of a UTF-16 offset, clamped to the text (`getPositionAt`).
     fn position_at(&self, offset: u32) -> Position;
-    /// Clamps a position into the text and off the middle of surrogate pairs and CRLF
-    /// (`validatePosition`).
+    /// Clamps a position into the text and, if it falls between the two halves of a surrogate
+    /// pair, moves it one column left, before the pair (`validatePosition`).
     fn validate_position(&self, position: Position) -> Position;
-    /// Validates both ends of a range (`validateRange`).
-    fn validate_range(&self, range: Range) -> Range {
-        Range::from_positions(
-            self.validate_position(range.start),
-            self.validate_position(range.end),
-        )
-    }
+    /// Clamps both ends into the text and keeps surrogate pairs whole (`validateRange`): an end
+    /// inside a pair moves outward (start left, end right), so the range grows to cover the
+    /// whole character; an empty range inside a pair moves one column left instead. For `"😀"`,
+    /// `(1,1)-(1,2)` validates to `(1,1)-(1,3)`.
+    fn validate_range(&self, range: Range) -> Range;
     /// The range covering the whole text (`getFullModelRange`).
     fn full_model_range(&self) -> Range {
         let last = self.line_count();
@@ -330,7 +338,10 @@ pub trait TextModel {
     }
 
     /// Applies edits atomically and returns the inverse edits, which restore the previous text
-    /// when applied (`applyEdits(ops, true)`). Edit ranges must not overlap.
+    /// when applied (`applyEdits(ops, true)`). Ranges are validated first.
+    ///
+    /// # Panics
+    /// If two edit ranges overlap, as TypeScript throws `Overlapping ranges are not allowed!`.
     fn apply_edits(&mut self, edits: &[SingleEditOperation]) -> Vec<SingleEditOperation>;
     /// Replaces the whole text (`setValue`); fires a flush event.
     fn set_value(&mut self, text: &str);
@@ -346,8 +357,8 @@ mod tests {
     #[test]
     fn range_constructor_swaps_ends() {
         let r = Range::new(2, 1, 1, 2);
-        assert_eq!(r.start, Position::new(1, 2));
-        assert_eq!(r.end, Position::new(2, 1));
+        assert_eq!(r.start(), Position::new(1, 2));
+        assert_eq!(r.end(), Position::new(2, 1));
         assert!(Range::new(1, 1, 1, 1).is_empty());
         assert!(!Range::new(1, 1, 1, 2).is_empty());
     }
