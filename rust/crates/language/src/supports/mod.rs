@@ -2,4 +2,5 @@
 //! and answer editor questions about it. Ported from `src/vs/editor/common/languages/supports/`.
 
 pub mod character_pair;
+pub mod indent_rules;
 pub mod on_enter;

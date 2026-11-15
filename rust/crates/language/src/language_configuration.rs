@@ -154,6 +154,22 @@ pub struct LanguageConfiguration {
     pub doc_comment: Option<DocComment>,
     /// Rules that change indentation after Enter.
     pub on_enter_rules: Option<Vec<OnEnterRule>>,
+    /// Regexes that classify lines for indentation.
+    pub indentation_rules: Option<IndentationRule>,
+}
+
+/// Regexes that classify each line for indentation (`IndentationRule`). The two indent patterns
+/// are required; the others are optional.
+#[derive(Clone, Debug)]
+pub struct IndentationRule {
+    /// Lines that outdent the next line, such as a closing bracket.
+    pub decrease_indent_pattern: Regex,
+    /// Lines that indent the next line, such as an opening bracket.
+    pub increase_indent_pattern: Regex,
+    /// Lines whose following line is indented once, such as `if (x)` without a brace.
+    pub indent_next_line_pattern: Option<Regex>,
+    /// Lines whose indentation is ignored, such as comment continuations.
+    pub un_indented_line_pattern: Option<Regex>,
 }
 
 /// What the editor does with indentation (`IndentAction`).
