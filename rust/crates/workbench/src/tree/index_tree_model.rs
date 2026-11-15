@@ -15,18 +15,27 @@
 //!   everywhere and then fails on the missing node (`has` returns `false` here).
 //! - `getListIndex` returns `None` where upstream returns `-1`; the root's
 //!   `visibleChildIndex` of `-1` is `None`.
-//! - Not ported yet: collapse/expand operations, `refilter`, and the `diffIdentityProvider`
-//!   smart splice. Nodes are still created collapsed or filtered out as upstream.
+//! - Refiltering after a splice under a `Recurse` ancestor is delayed to a microtask upstream.
+//!   Here the model only records it ([`IndexTreeModel::has_pending_refilter`]); the owner calls
+//!   [`IndexTreeModel::run_pending_refilter`] when its event-loop turn ends.
+//! - `refilter` passes the root's visibility (`Visible`) as the parent visibility of top-level
+//!   nodes; upstream passes `undefined`.
+//! - A recursive collapse of the root does not count the root as a rendered row (upstream
+//!   leaves the root's render count one too high, which a JS list hides by clamping).
+//! - The `diffIdentityProvider` smart splice is not ported yet; every splice replaces nodes.
 //!
 //! Upstream behavior kept as is: the `visibleChildIndex` given to inserted nodes starts from the
 //! visible child at or before the splice index, so it is only exact when that child is visible
 //! (where upstream would then go below zero on a later delete, it stops at 0 here).
 
 use super::{
-    NodeId, TreeElement, TreeError, TreeFilter, TreeFilterResult, TreeListSplice, TreeModelSplice,
-    TreeVisibility,
+    CollapseStateChange, NodeId, TreeElement, TreeError, TreeFilter, TreeFilterResult,
+    TreeListSplice, TreeModelSplice, TreeVisibility,
 };
 use vscode_api::{Emitter, Event};
+
+mod collapse;
+mod filter;
 
 /// A node of an [`IndexTreeModel`] (`IIndexTreeNode`).
 #[derive(Debug, Clone)]
@@ -139,6 +148,11 @@ impl<T, F> Default for SpliceOptions<'_, T, F> {
     }
 }
 
+enum Buffered {
+    CollapseState(CollapseStateChange),
+    RenderNodeCount(NodeId),
+}
+
 struct Slot<T, F> {
     generation: u32,
     node: Option<TreeNode<T, F>>,
@@ -167,9 +181,14 @@ pub struct IndexTreeModel<T, F = ()> {
     root: NodeId,
     collapse_by_default: bool,
     allow_non_collapsible_parents: bool,
+    auto_expand_single_children: bool,
     filter: Option<TreeFilter<T, F>>,
+    buffer_depth: usize,
+    buffered: Vec<Buffered>,
+    refilter_pending: bool,
     on_did_splice_model: Emitter<TreeModelSplice>,
     on_did_splice_rendered_nodes: Emitter<TreeListSplice>,
+    on_did_change_collapse_state: Emitter<CollapseStateChange>,
     on_did_change_render_node_count: Emitter<NodeId>,
 }
 
@@ -186,9 +205,14 @@ impl<T, F> IndexTreeModel<T, F> {
             },
             collapse_by_default: options.collapse_by_default,
             allow_non_collapsible_parents: options.allow_non_collapsible_parents,
+            auto_expand_single_children: options.auto_expand_single_children,
             filter: options.filter,
+            buffer_depth: 0,
+            buffered: Vec::new(),
+            refilter_pending: false,
             on_did_splice_model: Emitter::new(),
             on_did_splice_rendered_nodes: Emitter::new(),
+            on_did_change_collapse_state: Emitter::new(),
             on_did_change_render_node_count: Emitter::new(),
         };
         model.root = model.alloc(TreeNode {
@@ -220,6 +244,13 @@ impl<T, F> IndexTreeModel<T, F> {
         self.on_did_splice_rendered_nodes.event()
     }
 
+    /// Fires when a node's collapsible or collapsed state changes (`onDidChangeCollapseState`).
+    /// During `set_collapsed`, `set_collapsible` and `expand_to`, delivery waits until the
+    /// call finishes.
+    pub fn on_did_change_collapse_state(&self) -> Event<CollapseStateChange> {
+        self.on_did_change_collapse_state.event()
+    }
+
     /// Fires when a node's render count is recomputed (`onDidChangeRenderNodeCount`); buffered
     /// like [`IndexTreeModel::on_did_change_collapse_state`].
     pub fn on_did_change_render_node_count(&self) -> Event<NodeId> {
@@ -227,7 +258,11 @@ impl<T, F> IndexTreeModel<T, F> {
     }
 
     fn fire_render_node_count(&mut self, node: NodeId) {
-        self.on_did_change_render_node_count.fire(node);
+        if self.buffer_depth > 0 {
+            self.buffered.push(Buffered::RenderNodeCount(node));
+        } else {
+            self.on_did_change_render_node_count.fire(node);
+        }
     }
 
     // ---- arena --------------------------------------------------------------------------
@@ -422,6 +457,16 @@ impl<T, F> IndexTreeModel<T, F> {
             deleted_nodes: deleted,
         });
 
+        // Delayed upstream to avoid excessive refiltering (#135941).
+        let mut node = Some(parent);
+        while let Some(id) = node {
+            let n = self.n(id);
+            if n.visibility == TreeVisibility::Recurse {
+                self.refilter_pending = true;
+                break;
+            }
+            node = n.parent;
+        }
         Ok(())
     }
 
