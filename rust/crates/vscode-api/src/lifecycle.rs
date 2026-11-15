@@ -64,6 +64,59 @@ impl fmt::Debug for Disposable {
     }
 }
 
+/// The single-threaded counterpart of [`Disposable`]: same semantics, but its closure need not be
+/// `Send`, so it can capture `Rc` state. Returned by [`crate::event::LocalEvent::subscribe`] for
+/// UI-thread listeners (ADR 0007). It cannot be converted into a [`Disposable`].
+#[must_use = "dropping a LocalDisposable disposes it immediately; call `leak()` to keep the registration"]
+pub struct LocalDisposable {
+    on_dispose: Option<Box<dyn FnOnce()>>,
+}
+
+impl LocalDisposable {
+    /// Creates a disposable that runs `f` once when disposed.
+    pub fn new(f: impl FnOnce() + 'static) -> Self {
+        Self {
+            on_dispose: Some(Box::new(f)),
+        }
+    }
+
+    /// A disposable that does nothing.
+    pub fn none() -> Self {
+        Self { on_dispose: None }
+    }
+
+    /// Undoes the registration now. Later calls and the eventual drop do nothing.
+    pub fn dispose(&mut self) {
+        if let Some(f) = self.on_dispose.take() {
+            f();
+        }
+    }
+
+    /// Whether this disposable has already run (or never had anything to run).
+    pub fn is_disposed(&self) -> bool {
+        self.on_dispose.is_none()
+    }
+
+    /// Keeps the registration for the life of the process.
+    pub fn leak(mut self) {
+        self.on_dispose = None;
+    }
+}
+
+impl Drop for LocalDisposable {
+    fn drop(&mut self) {
+        self.dispose();
+    }
+}
+
+impl fmt::Debug for LocalDisposable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LocalDisposable")
+            .field("disposed", &self.is_disposed())
+            .finish()
+    }
+}
+
 /// A collection of disposables that are disposed together, in insertion order
 /// (`DisposableStore`). Dropping the store disposes it.
 #[derive(Debug, Default)]

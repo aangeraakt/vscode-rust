@@ -347,6 +347,20 @@ pub trait TextModel {
     fn set_value(&mut self, text: &str);
 
     /// Fires after every content change.
+    ///
+    /// Fire-after-apply rule (ADR 0007, as `textModel.ts` `_emitContentChangedEvent`): every
+    /// mutating method (`apply_edits`, `set_value`, `set_end_of_line_sequence`, and undo or redo
+    /// where an implementation provides them) fires only after the change is fully applied (text,
+    /// versions, markers), and never while one of its own interior borrows or locks is held.
+    ///
+    /// The `Event` returned here has `Send + Sync` listeners. They receive the event value only
+    /// and cannot read the model: models are not `Sync`, and `apply_edits(&mut self)` is still
+    /// borrowed while `Event` listeners run. The read-from-listener guarantee applies only to
+    /// UI-thread listeners subscribed to a [`LocalEmitter`](crate::event::LocalEmitter) owned by
+    /// the model's owner, which fires it after releasing its `borrow_mut` of the model.
+    ///
+    /// The trait exposes no owner-level UI-thread content event yet. A UI-thread owner wrapper is
+    /// the single mutation entry point for such models and fires its own `LocalEmitter`.
     fn on_did_change_content(&self) -> Event<ModelContentChangedEvent>;
 }
 

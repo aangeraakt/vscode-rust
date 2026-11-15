@@ -35,9 +35,10 @@ Format: `- [ ] YYYY-MM-DD, requester role NN: <what> in <module>, because <why>.
 These were deferred during the Phase 0 reviews. They are all additive unless marked otherwise;
 the consuming role picks one up by opening a request PR that names the exact API.
 
-- [ ] 2026-11-15, role 04/05 (from #8 review): `event` listeners must be `Send + Sync`; UI-thread view models may need a `!Send` local emitter, and must be able to read the model from inside a change listener. Decide before cursor work starts. PR: #8
+- [x] 2026-11-15, role 04/05 (from #8 review): `event` listeners must be `Send + Sync`; UI-thread view models may need a `!Send` local emitter, and must be able to read the model from inside a change listener. Decided in ADR 0007: `Emitter` stays for services; `LocalEmitter`/`LocalEvent` and `LocalDisposable` added for UI-thread view models; the fire-after-apply rule is documented on `TextModel::on_did_change_content`. PR: #8, decision PR: https://github.com/aangeraakt/vscode-rust/pull/11
 - [ ] 2026-11-15, role 03 (from #8 review): `TextModel` BOM access and indentation options (`getOptions`). PR: #8
 - [ ] 2026-11-15, role 10 (from #5 review): async command handlers for the extension host (the reviewer suggested making `CommandHandler` opaque; the Architect's current plan is a separate `register_async` that leaves `CommandHandler` unchanged; decide in the request); command metadata, aliases, and will/did-execute events; document the empty-id panic on `register`. PR: #5
+- [ ] 2026-11-15, role 03/04/05 (from #11 review): owner-level UI-thread content-change `LocalEvent` for text models, because `TextModel::on_did_change_content` is `Send + Sync` and cannot be read from a UI-thread listener, and no local content event exists on the trait, so view parts can only learn of edits through the owner wrapper. PR: #11
 - [ ] 2026-11-15, role 08/10 (from #7 review): `FileSystemProvider` `on_did_change_capabilities`, `on_did_watch_error`, watch filters and relative-pattern includes, descriptor and stream APIs, and TypeScript error-code string names for the extension-host bridge. PR: #7
 
 ## Blockers
@@ -52,3 +53,4 @@ _None._
 - 2026-11-15, 02–10: reading reference source for their areas; waiting on `vscode-api` approval.
 - 2026-11-15, 01: Phase 0 done; `vscode-api` merged (#3 to #8). Next: rows "Resource and path helpers", "Async primitives (throttler, delayer, cancellation)".
 - 2026-11-15, 02 to 10: Phase 1 unblocked. First tasks are in `docs/HANDOFF.md`; role 10 starts with CI.
+- 2026-11-15, 01: UI-thread event decision (ADR 0007) implemented in `vscode-api`: `LocalEmitter`, `LocalEvent`, `LocalDisposable`, fire-after-apply rule. Cursor work (04/05) can start.
