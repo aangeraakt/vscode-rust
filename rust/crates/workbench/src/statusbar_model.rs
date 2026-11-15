@@ -4,6 +4,8 @@
 //! - `src/vs/workbench/browser/parts/statusbar/statusbarModel.ts` (`StatusbarViewModel`)
 //! - `src/vs/workbench/services/statusbar/browser/statusbar.ts` (`StatusbarAlignment`,
 //!   `IStatusbarEntryLocation`, `IStatusbarEntryPriority`)
+//! - `src/vs/workbench/browser/parts/statusbar/statusbarPart.ts` (`updateCompactEntries`, the
+//!   grouping part only; see [`StatusbarViewModel::compact_entries`])
 //!
 //! Tests port `src/vs/workbench/test/browser/parts/statusbar/statusbarModel.test.ts` one for one
 //! (same names, snake_cased); the tests after them cover behavior the upstream suite leaves
@@ -13,8 +15,11 @@
 //! - Entries are identified by an [`EntryHandle`] returned from [`StatusbarViewModel::add`]
 //!   instead of object identity; `findEntry(container)` becomes [`StatusbarViewModel::find_entry`]
 //!   by handle. Ids may repeat, as upstream.
-//! - DOM work (showing and hiding containers, marker classes, focus) is left to the view. Focus
-//!   navigation, first/last visible entries and compact groups come in the next PR.
+//! - DOM work (showing and hiding containers, `first-visible-item` / `last-visible-item` and
+//!   `compact-left` / `compact-right` classes, focusing label containers) is left to the view.
+//!   The model answers the same questions: [`StatusbarViewModel::first_last_visible`],
+//!   [`StatusbarViewModel::compact_entries`], and the focus methods take the currently focused
+//!   entry as an argument and return the entry to focus (`isEntryFocused` is not ported).
 //! - Persistence: the storage service is M5 and does not exist yet. The hidden set lives in
 //!   memory. [`StatusbarViewModel::with_hidden_state`] takes what storage would return for
 //!   [`HIDDEN_ENTRIES_KEY`], [`StatusbarViewModel::set_save_hook`] receives what upstream would
@@ -26,10 +31,15 @@
 //! - Priorities are `f64`. When comparing, equal values (including `0` and `-0`) tie; otherwise
 //!   values are ordered with `f64::total_cmp`, so a NaN priority sorts before every number
 //!   (upstream's comparator returns NaN, which leaves the order engine-defined).
+//! - `lastFocusedEntry` returns `None` once that entry was removed (upstream keeps returning the
+//!   removed object).
 //!
 //! Matched quirk: during sorting, relative entries are grouped by id, so when two entries with
 //! the same id are positioned relative to the same existing entry, only the later one is kept
 //! (see `relative_entries_with_the_same_id_keep_only_the_last`).
+//! Also matched: grouping visits entries in their current order, so an entry placed left of a
+//! relative entry it references ends up appended at the end on the next sort (see
+//! `compact_entries_group_chained_locations_of_visible_entries`).
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -146,12 +156,24 @@ pub struct EntryVisibilityChange {
     pub visible: bool,
 }
 
+/// Entries that belong together because of `compact` locations (from `updateCompactEntries`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CompactEntries {
+    /// Each group of entries that share hover feedback, in upstream's map order.
+    pub groups: Vec<Vec<EntryHandle>>,
+    /// Entries that get the `compact-left` class.
+    pub compact_left: HashSet<EntryHandle>,
+    /// Entries that get the `compact-right` class.
+    pub compact_right: HashSet<EntryHandle>,
+}
+
 type SaveHook = Box<dyn FnMut(Option<&str>) + Send>;
 
 /// `StatusbarViewModel`: the sorted entries of both sides plus the hidden set.
 pub struct StatusbarViewModel {
     entries: Vec<StatusbarViewModelEntry>,
     hidden: Vec<String>,
+    last_focused: Option<EntryHandle>,
     next_handle: u64,
     save_hook: Option<SaveHook>,
     on_did_change_entry_visibility: Emitter<EntryVisibilityChange>,
@@ -174,6 +196,7 @@ impl StatusbarViewModel {
         Self {
             entries: Vec::new(),
             hidden: parse_hidden(raw),
+            last_focused: None,
             next_handle: 0,
             save_hook: None,
             on_did_change_entry_visibility: Emitter::new(),
@@ -202,6 +225,12 @@ impl StatusbarViewModel {
     /// All entries, sorted: left side first, then right side.
     pub fn entries(&self) -> &[StatusbarViewModelEntry] {
         &self.entries
+    }
+
+    /// The entry last focused through the focus methods, unless it is hidden or removed.
+    pub fn last_focused_entry(&self) -> Option<&StatusbarViewModelEntry> {
+        let entry = self.find_entry(self.last_focused?)?;
+        (!self.is_hidden(entry.id())).then_some(entry)
     }
 
     /// Adds an entry and re-sorts.
@@ -269,6 +298,32 @@ impl StatusbarViewModel {
             .collect()
     }
 
+    /// The next visible entry after `focused`, wrapping to the first (`focusNextEntry`).
+    pub fn focus_next_entry(&mut self, focused: Option<EntryHandle>) -> Option<EntryHandle> {
+        self.focus_entry(focused, 1, 0)
+    }
+
+    /// The previous visible entry before `focused`, wrapping to the last
+    /// (`focusPreviousEntry`).
+    pub fn focus_previous_entry(&mut self, focused: Option<EntryHandle>) -> Option<EntryHandle> {
+        let last = self.entries.len() as isize - 1;
+        self.focus_entry(focused, -1, last)
+    }
+
+    /// First and last visible entry of one side (`markFirstLastVisibleEntry`).
+    pub fn first_last_visible(
+        &self,
+        alignment: StatusbarAlignment,
+    ) -> (Option<EntryHandle>, Option<EntryHandle>) {
+        let mut visible = self
+            .entries
+            .iter()
+            .filter(|e| e.entry.alignment == alignment && !self.is_hidden(e.id()))
+            .map(|e| e.handle);
+        let first = visible.next();
+        (first, visible.next_back().or(first))
+    }
+
     /// Reloads the hidden set from a changed stored value and fires one visibility event per
     /// entry whose id changed state (`onDidStorageValueChange`).
     pub fn on_did_storage_value_change(&mut self, raw: Option<&str>) {
@@ -290,6 +345,57 @@ impl StatusbarViewModel {
                 changed.remove(pos);
             }
         }
+    }
+
+    /// Groups of visible entries joined by `compact` locations and the side classes each gets.
+    pub fn compact_entries(&self) -> CompactEntries {
+        // `mapIdToVisibleEntry`: first insertion position, last entry wins.
+        let mut visible: Vec<(&str, usize)> = Vec::new();
+        for (index, entry) in self.entries.iter().enumerate() {
+            if self.is_hidden(entry.id()) {
+                continue;
+            }
+            match visible.iter_mut().find(|(id, _)| *id == entry.id()) {
+                Some(slot) => slot.1 = index,
+                None => visible.push((entry.id(), index)),
+            }
+        }
+        let lookup = |id: &str| visible.iter().find(|(v, _)| *v == id).map(|(_, i)| *i);
+
+        let mut groups: Vec<(&str, Vec<(&str, usize)>)> = Vec::new();
+        let mut result = CompactEntries::default();
+        for &(_, index) in &visible {
+            let entry = &self.entries[index];
+            let Some(location) = entry.entry.priority.primary.location() else {
+                continue;
+            };
+            if !location.compact {
+                continue;
+            }
+            let Some(location_index) = lookup(&location.id) else {
+                continue;
+            };
+            let target = &self.entries[location_index];
+            let group = group_for(&mut groups, &location.id);
+            insert_keyed(group, entry.id(), index);
+            insert_keyed(group, target.id(), location_index);
+            let (left, right) = match location.alignment {
+                StatusbarAlignment::Left => (target.handle, entry.handle),
+                StatusbarAlignment::Right => (entry.handle, target.handle),
+            };
+            result.compact_left.insert(left);
+            result.compact_right.insert(right);
+        }
+        result.groups = groups
+            .into_iter()
+            .map(|(_, members)| {
+                members
+                    .into_iter()
+                    .map(|(_, i)| self.entries[i].handle)
+                    .collect()
+            })
+            .collect();
+        result
     }
 
     fn index_of(&self, handle: EntryHandle) -> Option<usize> {
@@ -314,6 +420,33 @@ impl StatusbarViewModel {
         if let Some(hook) = self.save_hook.as_mut() {
             hook(state.as_deref());
         }
+    }
+
+    fn focus_entry(
+        &mut self,
+        focused: Option<EntryHandle>,
+        delta: isize,
+        restart: isize,
+    ) -> Option<EntryHandle> {
+        let visible_from = |start: isize| {
+            let mut index = start;
+            while index >= 0 && (index as usize) < self.entries.len() {
+                let entry = &self.entries[index as usize];
+                if !self.is_hidden(entry.id()) {
+                    return Some(entry.handle);
+                }
+                index += delta;
+            }
+            None
+        };
+        let next = focused
+            .and_then(|h| self.index_of(h))
+            .and_then(|index| visible_from(index as isize + delta))
+            .or_else(|| visible_from(restart));
+        if next.is_some() {
+            self.last_focused = next;
+        }
+        next
     }
 
     fn sort(&mut self) {
@@ -492,6 +625,13 @@ mod tests {
             alignment: location_alignment,
             compact: false,
         });
+        e
+    }
+
+    fn compact(mut e: StatusbarEntry) -> StatusbarEntry {
+        if let StatusbarPrimaryPriority::Location(l) = &mut e.priority.primary {
+            l.compact = true;
+        }
         e
     }
 
@@ -754,5 +894,75 @@ mod tests {
             .collect();
         assert_eq!(got, [("a".into(), true), ("c".into(), false)]);
         assert!(model.is_hidden("gone"));
+    }
+
+    #[test]
+    fn focus_moves_over_visible_entries_and_wraps() {
+        let mut model = StatusbarViewModel::new();
+        let a = model.add(entry("a", Left, 3.0, 0.0));
+        let b = model.add(entry("b", Left, 2.0, 0.0));
+        let c = model.add(entry("c", Right, 1.0, 0.0));
+        model.hide("b");
+        assert_eq!(model.focus_next_entry(None), Some(a));
+        assert_eq!(model.focus_next_entry(Some(a)), Some(c));
+        assert_eq!(model.focus_next_entry(Some(c)), Some(a));
+        assert_eq!(model.focus_previous_entry(Some(a)), Some(c));
+        assert_eq!(model.focus_previous_entry(None), Some(c));
+        assert_eq!(model.last_focused_entry().map(|e| e.handle()), Some(c));
+        model.hide("c");
+        assert!(model.last_focused_entry().is_none());
+        model.show("b");
+        assert_eq!(model.focus_previous_entry(Some(a)), Some(b));
+    }
+
+    #[test]
+    fn first_and_last_visible_entry_per_side() {
+        let mut model = StatusbarViewModel::new();
+        let a = model.add(entry("a", Left, 3.0, 0.0));
+        model.add(entry("b", Left, 2.0, 0.0));
+        let c = model.add(entry("c", Left, 1.0, 0.0));
+        let r = model.add(entry("r", Right, 1.0, 0.0));
+        assert_eq!(model.first_last_visible(Left), (Some(a), Some(c)));
+        assert_eq!(model.first_last_visible(Right), (Some(r), Some(r)));
+        model.hide("r");
+        assert_eq!(model.first_last_visible(Right), (None, None));
+    }
+
+    #[test]
+    fn compact_entries_group_chained_locations_of_visible_entries() {
+        let mut model = StatusbarViewModel::new();
+        let root = model.add(entry("root", Right, 5.0, 0.0));
+        let after = model.add(compact(relative("after", Right, ("root", 0.0), Right, 0.0)));
+        let chained = model.add(compact(relative(
+            "chained",
+            Right,
+            ("after", 0.0),
+            Left,
+            0.0,
+        )));
+        model.add(relative("loose", Right, ("root", 0.0), Left, 0.0));
+        let solo = model.add(entry("solo", Right, 1.0, 0.0));
+        let before = model.add(compact(relative("before", Right, ("solo", 0.0), Left, 0.0)));
+
+        // Upstream quirk, matched: `chained` first sorts before `after` (left of it), so the
+        // next sort visits `chained` before `after` joined the `root` group; `chained` then
+        // starts a leftover group and moves to the end.
+        assert_eq!(
+            ids(&model),
+            ["loose", "root", "after", "before", "solo", "chained"]
+        );
+        let compact = model.compact_entries();
+        assert_eq!(
+            compact.groups,
+            [vec![after, root, chained], vec![before, solo]]
+        );
+        assert_eq!(compact.compact_left, HashSet::from([after, solo]));
+        assert_eq!(
+            compact.compact_right,
+            HashSet::from([root, before, chained])
+        );
+
+        model.hide("solo");
+        assert_eq!(model.compact_entries().groups, [vec![after, root, chained]]);
     }
 }
