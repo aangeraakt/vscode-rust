@@ -94,7 +94,7 @@ drop through a COORDINATION.md request.
 | Position, range, selection, edits | `src/vs/editor/common/core/{position,range,selection}.ts` | vscode-api | 01 | P0 | done (tests) |
 | Other editor core types (word helpers, char classifier, edit builders, line ranges) | `src/vs/editor/common/core/` (rest) | editor | 04 | M1 | not started |
 | Text model contract | `src/vs/editor/common/model.ts`, `textModelEvents.ts` | vscode-api | 01 | P0 | done (contract only; behavior parity is tested under the "Piece tree" and "Text model" rows) |
-| Piece tree text buffer | `src/vs/editor/common/model/pieceTreeTextBuffer/` | text-buffer | 03 | M1 | not started |
+| Piece tree text buffer | `src/vs/editor/common/model/pieceTreeTextBuffer/` | text-buffer | 03 | M1 | in progress (role 03, PR #14) |
 | Text model (versioning, EOL, BOM, search) | `src/vs/editor/common/model/{textModel,textModelSearch,editStack,indentationGuesser}.ts` | text-buffer | 03 | M1 | not started |
 | Encodings | `src/vs/workbench/services/textfile/common/encoding.ts` | text-buffer | 03 | M1 | not started |
 | Decorations store (interval tree) | `src/vs/editor/common/model/intervalTree.ts` | text-buffer | 03 | M1 | not started |
