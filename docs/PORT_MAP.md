@@ -18,7 +18,7 @@ drop through a COORDINATION.md request.
 | Event emitter | `src/vs/base/common/event.ts` | vscode-api | 01 | P0 | done (tests; nested-fire ordering differs, documented in `event.rs`) |
 | Disposables, lifecycle | `src/vs/base/common/lifecycle.ts` | vscode-api | 01 | P0 | done (tests) |
 | URI | `src/vs/base/common/uri.ts` | vscode-api | 01 | P0 | done (tests) |
-| Resource and path helpers | `src/vs/base/common/{resources,path}.ts` | vscode-api | 01 | M1 | not started |
+| Resource and path helpers | `src/vs/base/common/{resources,path}.ts` | vscode-api | 01 | M1 | in progress (role 01, PR #12) |
 | Async primitives (throttler, delayer, cancellation) | `src/vs/base/common/async.ts`, `cancellation.ts` | vscode-api | 01 | M1 | not started |
 | Strings, glob, fuzzy scorer, filters | `src/vs/base/common/{strings,glob,fuzzyScorer,filters}.ts` | workspace | 08 | M2 | not started |
 | JSON with comments parser and edit | `src/vs/base/common/{json,jsonEdit,jsonFormatter}.ts` | settings | 10 | M5 | not started |
