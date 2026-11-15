@@ -15,9 +15,10 @@ drop through a COORDINATION.md request.
 
 | Area | TypeScript source | Crate | Owner | Milestone | Status |
 |---|---|---|---|---|---|
-| Event emitter | `src/vs/base/common/event.ts` | vscode-api | 01 | P0 | not started |
-| Disposables, lifecycle | `src/vs/base/common/lifecycle.ts` | vscode-api | 01 | P0 | not started |
-| URI | `src/vs/base/common/uri.ts`, `resources.ts`, `path.ts` | vscode-api | 01 | P0 | not started |
+| Event emitter | `src/vs/base/common/event.ts` | vscode-api | 01 | P0 | done (tests; nested-fire ordering differs, documented in `event.rs`) |
+| Disposables, lifecycle | `src/vs/base/common/lifecycle.ts` | vscode-api | 01 | P0 | done (tests) |
+| URI | `src/vs/base/common/uri.ts` | vscode-api | 01 | P0 | done (tests) |
+| Resource and path helpers | `src/vs/base/common/{resources,path}.ts` | vscode-api | 01 | M1 | not started |
 | Async primitives (throttler, delayer, cancellation) | `src/vs/base/common/async.ts`, `cancellation.ts` | vscode-api | 01 | M1 | not started |
 | Strings, glob, fuzzy scorer, filters | `src/vs/base/common/{strings,glob,fuzzyScorer,filters}.ts` | workspace | 08 | M2 | not started |
 | JSON with comments parser and edit | `src/vs/base/common/{json,jsonEdit,jsonFormatter}.ts` | settings | 10 | M5 | not started |
@@ -38,15 +39,16 @@ drop through a COORDINATION.md request.
 
 | Area | TypeScript source | Crate | Owner | Milestone | Status |
 |---|---|---|---|---|---|
-| Instantiation / service registry | `src/vs/platform/instantiation/` | vscode-api | 01 | P0 | not started |
-| Commands | `src/vs/platform/commands/` | vscode-api | 01 | P0 | not started |
+| Instantiation / service registry | `src/vs/platform/instantiation/` | vscode-api | 01 | P0 | done (tests; explicit registration, no constructor injection, ADR 0005) |
+| Commands | `src/vs/platform/commands/` | vscode-api | 01 | P0 | done (tests) |
 | Configuration model and registry | `src/vs/platform/configuration/` | vscode-api (model), settings (registry, files) | 01 / 10 | P0 / M5 | not started |
 | Files: provider contract | `src/vs/platform/files/common/files.ts` | vscode-api | 01 | P0 | not started |
 | Files: disk provider, file service, watcher | `src/vs/platform/files/{common/fileService.ts,node/}` | workspace | 08 | M1 | not started |
 | Context keys and `when` clauses | `src/vs/platform/contextkey/` | workbench | 07 | M2 | not started |
 | Keybinding resolution and dispatch | `src/vs/platform/keybinding/`, `keyboardLayout/` | settings | 10 | M1 | not started |
 | Actions and menus registry | `src/vs/platform/actions/`, `action/` | workbench | 07 | M2 | not started |
-| Lifecycle phases | `src/vs/platform/lifecycle/` | vscode-api | 01 | P0 | not started |
+| Lifecycle phases | `src/vs/workbench/services/lifecycle/common/lifecycle.ts` (enums) | vscode-api | 01 | P0 | done (tests) |
+| Lifecycle service (phase events, shutdown veto) | `src/vs/platform/lifecycle/`, `src/vs/workbench/services/lifecycle/` | lathe | 01 | M1 | not started |
 | Window, native host, auxiliary windows | `src/vs/platform/{window,windows,native,auxiliaryWindow}/` | platform | 02 | M1 | not started |
 | Clipboard | `src/vs/platform/clipboard/` | platform | 02 | M1 | not started |
 | Dialogs | `src/vs/platform/dialogs/` | platform | 02 | M1 | not started |
