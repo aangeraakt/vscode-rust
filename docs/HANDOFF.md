@@ -32,7 +32,8 @@ can start.
 
 Lesson for stacked PRs: after a squash merge, rebase the next branch with
 `git rebase --onto origin/rust-port <old tip of the merged branch>`. A plain
-`git rebase origin/rust-port` replays the pre-squash commits and conflicts.
+`git rebase origin/rust-port` replays the pre-squash commits and can conflict (it did for #7;
+for #6 it finished cleanly).
 
 ### Blocked
 
@@ -50,11 +51,11 @@ Each agent opens a claim PR for one PORT_MAP row first, then works it.
 
 1. **Role 10:** `.github/workflows/rust-ci.yml` running build, test, `clippy -D warnings` and `fmt --check` on Ubuntu and Windows for PRs into `rust-port` (paths `rust/**`). Then ask the Architect to make it a required status check. **Do this first.** Then the row "Keybinding model and key codes".
 2. **Role 03:** row "Piece tree text buffer": port `pieceTreeBase.ts`, `pieceTreeTextBuffer.ts`, the builder, and the upstream test suite `src/vs/editor/test/common/model/pieceTreeTextBuffer/`.
-3. **Role 02:** row "Window, native host": winit window and event loop, plus a draw-layer API proposal (ADR 0002) as a COORDINATION request.
-4. **Role 08:** row "Files: disk provider": a `file`-scheme `FileSystemProvider` on tokio and `notify`.
+3. **Role 02:** row "Window, native host, auxiliary windows": winit window and event loop, plus a draw-layer API proposal (ADR 0002) as a COORDINATION request.
+4. **Role 08:** row "Files: disk provider, file service, watcher": a `file`-scheme `FileSystemProvider` on tokio and `notify`.
 5. **Role 04:** row "Editor options" (`src/vs/editor/common/config/`): pure logic; cursor work waits on role 03.
 6. **Role 05:** row "Line layout, scroll model" (`src/vs/editor/common/viewLayout/`): pure logic.
 7. **Role 06:** row "Tokenization and language configuration": pure logic.
 8. **Role 07:** row "UI widgets: split view, grid, sash": layout model first, without rendering.
 9. **Role 09:** row "Terminal platform (PTY host)": PTY spawn and resize with `portable-pty`.
-10. **Role 01:** rows "Resource and path helpers", "Async primitives", then the `lathe` binary skeleton; write the M2 scenario in `tests/e2e/` before M2 starts.
+10. **Role 01:** rows "Resource and path helpers", "Async primitives (throttler, delayer, cancellation)", then the `lathe` binary skeleton; write the M2 scenario in `tests/e2e/` before M2 starts.
