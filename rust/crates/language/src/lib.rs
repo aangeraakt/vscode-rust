@@ -7,6 +7,8 @@
 //! - [`language_id_codec`]: string language ids to the 8-bit ids stored in metadata
 //!   (`services/languagesRegistry.ts`, `LanguageIdCodec`).
 //! - [`line_tokens`]: the tokens of one line (`editor/common/tokens/lineTokens.ts`).
+//! - [`tokenization_registry`]: the per-language tokenization support registry
+//!   (`editor/common/tokenizationRegistry.ts`).
 //!
 //! Offsets follow the text model (ADR 0003): token offsets count UTF-16 code units, as they do
 //! in the TypeScript source.
@@ -14,7 +16,9 @@
 pub mod encoded_token_attributes;
 pub mod language_id_codec;
 pub mod line_tokens;
+pub mod tokenization_registry;
 
 pub use encoded_token_attributes::{ColorId, FontStyle, StandardTokenType, TokenMetadata};
 pub use language_id_codec::LanguageIdCodec;
 pub use line_tokens::{LineTokens, SlicedLineTokens, ViewLineTokens};
+pub use tokenization_registry::{TokenizationRegistry, TokenizationSupportChanged};
