@@ -14,6 +14,7 @@ pub mod event;
 pub mod files;
 pub mod ids;
 pub mod lifecycle;
+pub mod path;
 pub mod services;
 pub mod uri;
 
