@@ -5,6 +5,8 @@
 //! suite does not test.
 
 use super::*;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use vscode_api::Disposable;
 
@@ -218,8 +220,112 @@ fn hidden_delete() {
     });
 }
 
+#[test]
+fn collapse() {
+    with_smart_splice(|options| {
+        let mut model = model(-1);
+        let list = bind(&model);
+        model
+            .splice(&[0], 0, three_with_children(), options())
+            .unwrap();
+        assert_eq!(list.len(), 6);
+        model.set_collapsed(&[0], Some(true), false).unwrap();
+        assert_eq!(
+            list.rows(&model),
+            [(0, true, 1), (1, false, 1), (2, false, 1)]
+        );
+    });
+}
+
+#[test]
+fn expand() {
+    with_smart_splice(|options| {
+        let mut model = model(-1);
+        let list = bind(&model);
+        model
+            .splice(&[0], 0, three_collapsed_children(), options())
+            .unwrap();
+        assert_eq!(list.len(), 3);
+        model.expand_to(&[0, 1]).unwrap();
+        assert_eq!(
+            list.rows(&model),
+            [
+                (0, false, 1),
+                (10, false, 2),
+                (11, false, 2),
+                (12, false, 2),
+                (1, false, 1),
+                (2, false, 1)
+            ]
+        );
+    });
+}
+
+#[test]
+fn collapse_should_recursively_adjust_visible_count() {
+    let mut model = model(-1);
+    let list = bind(&model);
+    let tree = vec![p(1, vec![p(11, vec![e(111)])]), p(2, vec![e(21)])];
+    model
+        .splice(&[0], 0, tree, SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.elements(&model), [1, 11, 111, 2, 21]);
+    model.set_collapsed(&[0, 0], Some(true), false).unwrap();
+    assert_eq!(list.elements(&model), [1, 11, 2, 21]);
+    model.set_collapsed(&[1], Some(true), false).unwrap();
+    assert_eq!(list.elements(&model), [1, 11, 2]);
+}
+
+#[test]
+fn set_collapsible() {
+    let mut model = model(-1);
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, [p(0, vec![e(10)])], SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.len(), 2);
+    // (element, collapsible, collapsed) per row.
+    let state = |model: &IndexTreeModel<i32>| -> Vec<(i32, bool, bool)> {
+        list.ids()
+            .iter()
+            .map(|&id| {
+                let n = model.node(id).unwrap();
+                (*n.element(), n.collapsible(), n.collapsed())
+            })
+            .collect()
+    };
+
+    model.set_collapsible(&[0], Some(false)).unwrap();
+    assert_eq!(state(&model), [(0, false, false), (10, false, false)]);
+    assert!(!model.set_collapsed(&[0], Some(true), false).unwrap());
+    assert_eq!(state(&model), [(0, false, false), (10, false, false)]);
+    assert!(!model.set_collapsed(&[0], Some(false), false).unwrap());
+    assert_eq!(state(&model), [(0, false, false), (10, false, false)]);
+
+    model.set_collapsible(&[0], Some(true)).unwrap();
+    assert_eq!(state(&model), [(0, true, false), (10, false, false)]);
+    assert!(model.set_collapsed(&[0], Some(true), false).unwrap());
+    assert_eq!(state(&model), [(0, true, true)]);
+    assert!(model.set_collapsed(&[0], Some(false), false).unwrap());
+    assert_eq!(state(&model), [(0, true, false), (10, false, false)]);
+}
+
 fn zero_to_seven() -> Vec<TreeElement<i32>> {
     vec![p(0, (1..=7).map(e).collect())]
+}
+
+#[test]
+fn simple_filter() {
+    let mut model = filtered(-1, |e: &i32, _| (e % 2 == 0).into());
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, zero_to_seven(), SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.elements(&model), [0, 2, 4, 6]);
+    model.set_collapsed(&[0], Some(true), false).unwrap();
+    assert_eq!(list.elements(&model), [0]);
+    model.set_collapsed(&[0], Some(false), false).unwrap();
+    assert_eq!(list.elements(&model), [0, 2, 4, 6]);
 }
 
 #[test]
@@ -236,6 +342,142 @@ fn recursive_filter_on_initial_model() {
         .splice(&[0], 0, [p(0, vec![e(1), e(2)])], SpliceOptions::default())
         .unwrap();
     assert!(list.elements(&model).is_empty());
+}
+
+#[test]
+fn refilter() {
+    let should_filter = Rc::new(Cell::new(false));
+    let flag = should_filter.clone();
+    let mut model = filtered(-1, move |e: &i32, _| (!flag.get() || e % 2 == 0).into());
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, zero_to_seven(), SpliceOptions::default())
+        .unwrap();
+    let all: Vec<i32> = (0..=7).collect();
+    assert_eq!(list.elements(&model), all);
+    model.refilter();
+    assert_eq!(list.elements(&model), all);
+    should_filter.set(true);
+    model.refilter();
+    assert_eq!(list.elements(&model), [0, 2, 4, 6]);
+    should_filter.set(false);
+    model.refilter();
+    assert_eq!(list.elements(&model), all);
+}
+
+/// A model whose filter shows elements containing the query and recurses into the others.
+fn recursive_query_model(query: &Rc<RefCell<String>>) -> IndexTreeModel<&'static str> {
+    let query = query.clone();
+    filtered("root", move |e: &&str, _| {
+        if e.contains(query.borrow().as_str()) {
+            TreeVisibility::Visible.into()
+        } else {
+            TreeVisibility::Recurse.into()
+        }
+    })
+}
+
+fn repo(collapsed: bool) -> Vec<TreeElement<&'static str>> {
+    let root = p(
+        "vscode",
+        vec![
+            e(".build"),
+            e("git"),
+            p(
+                "github",
+                vec![e("calendar.yml"), e("endgame"), e("build.js")],
+            ),
+            p("build", vec![e("lib"), e("gulpfile.js")]),
+        ],
+    );
+    vec![if collapsed {
+        root.collapsed(true)
+    } else {
+        root
+    }]
+}
+
+#[test]
+fn recursive_filter() {
+    let query = Rc::new(RefCell::new(String::new()));
+    let mut model = recursive_query_model(&query);
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, repo(false), SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.len(), 10);
+    *query.borrow_mut() = "build".into();
+    model.refilter();
+    let matches = ["vscode", ".build", "github", "build.js", "build"];
+    assert_eq!(list.elements(&model), matches);
+    model.set_collapsed(&[0], Some(true), false).unwrap();
+    assert_eq!(list.elements(&model), ["vscode"]);
+    model.set_collapsed(&[0], Some(false), false).unwrap();
+    assert_eq!(list.elements(&model), matches);
+}
+
+#[test]
+fn recursive_filter_updates_when_children_change_133272() {
+    let query = Rc::new(RefCell::new(String::new()));
+    let mut model = recursive_query_model(&query);
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, [p("a", vec![e("b")])], SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.elements(&model), ["a", "b"]);
+    *query.borrow_mut() = "visible".into();
+    model.refilter();
+    assert!(list.elements(&model).is_empty());
+
+    model
+        .splice(&[0, 0, 0], 0, [e("visible")], SpliceOptions::default())
+        .unwrap();
+    // Upstream awaits the refilter microtask here.
+    assert!(model.has_pending_refilter());
+    model.run_pending_refilter();
+    assert!(!model.has_pending_refilter());
+    assert_eq!(list.elements(&model), ["a", "b", "visible"]);
+}
+
+#[test]
+fn recursive_filter_with_collapse() {
+    let query = Rc::new(RefCell::new(String::new()));
+    let mut model = recursive_query_model(&query);
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, repo(false), SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.len(), 10);
+    *query.borrow_mut() = "gulp".into();
+    model.refilter();
+    assert_eq!(list.elements(&model), ["vscode", "build", "gulpfile.js"]);
+    model.set_collapsed(&[0, 3], Some(true), false).unwrap();
+    assert_eq!(list.elements(&model), ["vscode", "build"]);
+    model.set_collapsed(&[0], Some(true), false).unwrap();
+    assert_eq!(list.elements(&model), ["vscode"]);
+}
+
+#[test]
+fn recursive_filter_while_collapsed() {
+    let query = Rc::new(RefCell::new(String::new()));
+    let mut model = recursive_query_model(&query);
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, repo(true), SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.elements(&model), ["vscode"]);
+    *query.borrow_mut() = "gulp".into();
+    model.refilter();
+    assert_eq!(list.elements(&model), ["vscode"]);
+    model.set_collapsed(&[0], Some(false), false).unwrap();
+    assert_eq!(list.elements(&model), ["vscode", "build", "gulpfile.js"]);
+    model.set_collapsed(&[0], Some(true), false).unwrap();
+    assert_eq!(list.elements(&model), ["vscode"]);
+    query.borrow_mut().clear();
+    model.refilter();
+    assert_eq!(list.elements(&model), ["vscode"]);
+    model.set_collapsed(&[0], Some(false), false).unwrap();
+    assert_eq!(list.len(), 10);
 }
 
 #[test]
@@ -270,6 +512,57 @@ fn get_node_location_with_filter() {
     assert_eq!(locations, expected);
 }
 
+fn substring_model(query: &Rc<RefCell<String>>) -> IndexTreeModel<&'static str> {
+    let query = query.clone();
+    filtered("root", move |e: &&str, _| {
+        e.contains(query.borrow().as_str()).into()
+    })
+}
+
+#[test]
+fn refilter_with_filtered_out_nodes() {
+    let query = Rc::new(RefCell::new(String::new()));
+    let mut model = substring_model(&query);
+    let list = bind(&model);
+    let metals = || [e("silver"), e("gold"), e("platinum")];
+    model
+        .splice(&[0], 0, metals(), SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.elements(&model), ["silver", "gold", "platinum"]);
+    *query.borrow_mut() = "platinum".into();
+    model.refilter();
+    assert_eq!(list.elements(&model), ["platinum"]);
+    model
+        .splice(&[0], usize::MAX, metals(), SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.elements(&model), ["platinum"]);
+    model.refilter();
+    assert_eq!(list.elements(&model), ["platinum"]);
+}
+
+#[test]
+fn explicit_hidden_nodes_should_have_render_node_count_0_issue_83211() {
+    let query = Rc::new(RefCell::new(String::new()));
+    let mut model = substring_model(&query);
+    let list = bind(&model);
+    let tree = vec![p("a", vec![e("aa")]), p("b", vec![e("bb")])];
+    model
+        .splice(&[0], 0, tree, SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.elements(&model), ["a", "aa", "b", "bb"]);
+    let indices = |model: &IndexTreeModel<&str>| -> Vec<Option<usize>> {
+        [&[0][..], &[0, 0], &[1], &[1, 0]]
+            .iter()
+            .map(|l| model.get_list_index(l).unwrap())
+            .collect()
+    };
+    assert_eq!(indices(&model), [Some(0), Some(1), Some(2), Some(3)]);
+    *query.borrow_mut() = "b".into();
+    model.refilter();
+    assert_eq!(list.elements(&model), ["b", "bb"]);
+    assert_eq!(indices(&model), [None, None, Some(0), Some(1)]);
+}
+
 // ---- Not upstream ----------------------------------------------------------------------
 
 #[test]
@@ -296,6 +589,7 @@ fn invalid_locations_are_errors() {
     assert!(model.has(&[0, 2]));
     assert!(!model.has(&[0, 3]));
     assert!(model.get_node(&[4]).is_err());
+    assert!(model.set_collapsed(&[9], None, false).is_err());
 }
 
 #[test]
@@ -314,8 +608,8 @@ fn queries_follow_upstream() {
     assert_eq!(model.get_list_render_count(&[0]).unwrap(), 4);
     assert_eq!(model.get_list_render_count(&[]).unwrap(), 6);
     assert_eq!(model.get_node(&[]).unwrap().element(), &-1);
-    assert!(model.get_node(&[0]).unwrap().collapsible());
-    assert!(!model.get_node(&[1]).unwrap().collapsible());
+    assert!(model.is_collapsible(&[0]).unwrap());
+    assert!(!model.is_collapsible(&[1]).unwrap());
 }
 
 #[test]
@@ -331,6 +625,65 @@ fn deleted_node_ids_go_stale() {
     let new = model.get_node_id(&[0]).unwrap();
     assert!(model.node(old).is_none());
     assert_eq!(model.node(new).unwrap().element(), &1);
+}
+
+#[test]
+fn collapse_events_are_buffered_until_the_call_returns() {
+    let mut model = model(-1);
+    model
+        .splice(
+            &[0],
+            0,
+            [p(0, vec![p(1, vec![e(2)])])],
+            SpliceOptions::default(),
+        )
+        .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (a, b) = (seen.clone(), seen.clone());
+    let _c = model
+        .on_did_change_collapse_state()
+        .subscribe(move |e| a.lock().unwrap().push(format!("collapse deep={}", e.deep)));
+    let _r = model
+        .on_did_change_render_node_count()
+        .subscribe(move |_| b.lock().unwrap().push("count".to_owned()));
+    let _l = model.on_did_splice_rendered_nodes().subscribe(move |_| {});
+    assert!(model.set_collapsed(&[0], Some(true), true).unwrap());
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[..2], ["collapse deep=false", "collapse deep=true"]);
+    assert!(seen[2..].iter().all(|s| s == "count"));
+}
+
+#[test]
+fn recursive_collapse_of_root_keeps_counts() {
+    // `collapseAll` collapses the root recursively.
+    let mut model = model(-1);
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, three_with_children(), SpliceOptions::default())
+        .unwrap();
+    assert!(model.set_collapsed(&[], Some(true), true).unwrap());
+    assert_eq!(list.elements(&model), [0, 1, 2]);
+    assert_eq!(model.get_list_render_count(&[]).unwrap(), 3);
+    model.refilter();
+    assert_eq!(list.elements(&model), [0, 1, 2]);
+}
+
+#[test]
+fn auto_expand_single_children() {
+    let options = IndexTreeModelOptions {
+        auto_expand_single_children: true,
+        collapse_by_default: true,
+        ..Default::default()
+    };
+    let mut model: IndexTreeModel<i32> = IndexTreeModel::new("test", -1, options);
+    let list = bind(&model);
+    let tree = vec![p(0, vec![p(1, vec![e(2), e(3)])])];
+    model
+        .splice(&[0], 0, tree, SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.elements(&model), [0]);
+    model.set_collapsed(&[0], Some(false), false).unwrap();
+    assert_eq!(list.elements(&model), [0, 1, 2, 3]);
 }
 
 #[test]
@@ -370,4 +723,22 @@ fn create_and_delete_callbacks_visit_every_node() {
     };
     model.splice(&[0], 2, [], options).unwrap();
     assert_eq!(deleted, [0, 10, 11, 12, 1]);
+}
+
+#[test]
+fn ten_thousand_rows_expand_and_collapse() {
+    // M2 Explorer scenario: a folder with 10,000 files.
+    let mut model = model(-1);
+    let list = bind(&model);
+    let files = (0..10_000).map(e).collect();
+    let folder = p(-2, files).collapsed(true);
+    model
+        .splice(&[0], 0, [folder], SpliceOptions::default())
+        .unwrap();
+    assert_eq!(list.len(), 1);
+    model.set_collapsed(&[0], Some(false), false).unwrap();
+    assert_eq!(list.len(), 10_001);
+    assert_eq!(model.get_list_index(&[0, 9_999]).unwrap(), Some(10_000));
+    model.set_collapsed(&[0], Some(true), false).unwrap();
+    assert_eq!(list.len(), 1);
 }
