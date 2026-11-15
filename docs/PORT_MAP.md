@@ -56,7 +56,8 @@ drop through a COORDINATION.md request.
 | Dialogs | `src/vs/platform/dialogs/` | platform | 02 | M1 | not started |
 | Menubar (native) | `src/vs/platform/menubar/` | platform | 02 | M2 | not started |
 | Secrets, encryption (keychain) | `src/vs/platform/{secrets,encryption}/` | platform | 02 | M5 | not started |
-| Theme service and color registry | `src/vs/platform/theme/` | workbench | 07 | M2 | not started |
+| Color and color registry (color math, parse/format, color contributions and defaults) | `src/vs/base/common/color.ts`, `src/vs/platform/theme/common/{colorUtils,colorRegistry}.ts`, `colors/` | workbench | 07 | M2 | in progress (role 07, PR #66) |
+| Theme service (rest: theme service, icon, size and token classification registries) | `src/vs/platform/theme/` (rest) | workbench | 07 | M2 | not started |
 | Quick input | `src/vs/platform/quickinput/` | workbench | 07 | M2 | not started |
 | Context view, hover, notification | `src/vs/platform/{contextview,hover,notification,progress}/` | workbench | 07 | M2 | not started |
 | Undo/redo service | `src/vs/platform/undoRedo/` | editor | 04 | M1 | not started |
