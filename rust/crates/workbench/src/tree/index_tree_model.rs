@@ -22,7 +22,9 @@
 //!   nodes; upstream passes `undefined`.
 //! - A recursive collapse of the root does not count the root as a rendered row (upstream
 //!   leaves the root's render count one too high, which a JS list hides by clamping).
-//! - The `diffIdentityProvider` smart splice is not ported yet; every splice replaces nodes.
+//! - In a smart splice with `diff_depth > 0`, unchanged siblings before the splice index keep
+//!   their children (upstream clears them, because it reads past the inserted elements).
+//! - Smart splice uses a local LCS diff (see the private `lcs` module), not `LcsDiff`.
 //!
 //! Upstream behavior kept as is: the `visibleChildIndex` given to inserted nodes starts from the
 //! visible child at or before the splice index, so it is only exact when that child is visible
@@ -36,6 +38,7 @@ use vscode_api::{Emitter, Event};
 
 mod collapse;
 mod filter;
+mod smart_splice;
 
 /// A node of an [`IndexTreeModel`] (`IIndexTreeNode`).
 #[derive(Debug, Clone)]
@@ -52,6 +55,7 @@ pub struct TreeNode<T, F> {
     visibility: TreeVisibility,
     visible: bool,
     filter_data: Option<F>,
+    last_diff_ids: Option<Vec<String>>,
 }
 
 impl<T, F> TreeNode<T, F> {
@@ -133,6 +137,11 @@ pub type NodeCallback<'a, T, F> = &'a mut dyn FnMut(NodeId, &TreeNode<T, F>);
 
 /// Options for [`IndexTreeModel::splice`] (`IIndexTreeModelSpliceOptions`).
 pub struct SpliceOptions<'a, T, F> {
+    /// Enables the smart splice: children whose id is unchanged keep their node (and its
+    /// collapse state). Nodes are never replaced while their id stays the same.
+    pub diff_identity_provider: Option<&'a dyn Fn(&T) -> String>,
+    /// How many levels below unchanged nodes the smart splice recurses; `usize::MAX` for all.
+    pub diff_depth: usize,
     /// Called for every created node, children first.
     pub on_did_create_node: Option<NodeCallback<'a, T, F>>,
     /// Called for every deleted node, parents first.
@@ -142,6 +151,8 @@ pub struct SpliceOptions<'a, T, F> {
 impl<T, F> Default for SpliceOptions<'_, T, F> {
     fn default() -> Self {
         Self {
+            diff_identity_provider: None,
+            diff_depth: 0,
             on_did_create_node: None,
             on_did_delete_node: None,
         }
@@ -228,6 +239,7 @@ impl<T, F> IndexTreeModel<T, F> {
             visibility: TreeVisibility::Visible,
             visible: true,
             filter_data: None,
+            last_diff_ids: None,
         });
         model
     }
@@ -343,8 +355,21 @@ impl<T, F> IndexTreeModel<T, F> {
         if location.is_empty() {
             return Err(self.invalid());
         }
-        let to_insert = to_insert.into_iter().collect();
-        self.splice_simple(location, delete_count, to_insert, &mut options)
+        let to_insert: Vec<_> = to_insert.into_iter().collect();
+        match options.diff_identity_provider {
+            Some(identity) => {
+                let depth = options.diff_depth;
+                self.splice_smart(
+                    identity,
+                    location,
+                    delete_count,
+                    to_insert,
+                    &mut options,
+                    depth,
+                )
+            }
+            None => self.splice_simple(location, delete_count, to_insert, &mut options),
+        }
     }
 
     fn splice_simple(
@@ -406,6 +431,25 @@ impl<T, F> IndexTreeModel<T, F> {
             .children
             .splice(last_index..end, nodes_to_insert.iter().copied())
             .collect();
+        let diff_ids = options.diff_identity_provider.map(|identity| {
+            let ids_of = |nodes: &[NodeId]| -> Vec<String> {
+                nodes
+                    .iter()
+                    .map(|&n| identity(&self.n(n).element))
+                    .collect()
+            };
+            match &self.n(parent).last_diff_ids {
+                Some(ids) => {
+                    let mut ids = ids.clone();
+                    let start = last_index.min(ids.len());
+                    ids.splice(start..end.min(ids.len()), ids_of(&nodes_to_insert));
+                    ids
+                }
+                None => ids_of(&self.n(parent).children),
+            }
+        });
+        self.n_mut(parent).last_diff_ids = diff_ids;
+
         let deleted_visible = deleted.iter().filter(|&&n| self.n(n).visible).count();
         if deleted_visible != 0 {
             let after = self.n(parent).children[last_index + nodes_to_insert.len()..].to_vec();
@@ -498,6 +542,7 @@ impl<T, F> IndexTreeModel<T, F> {
             visibility: TreeVisibility::Visible,
             visible: true,
             filter_data: None,
+            last_diff_ids: None,
         });
         let visibility = self.filter_node(id, parent_visibility);
         self.n_mut(id).visibility = visibility;
