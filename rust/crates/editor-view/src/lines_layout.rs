@@ -754,3 +754,6 @@ impl LinesLayout {
         self.arr[index].height
     }
 }
+
+#[cfg(test)]
+mod tests;
