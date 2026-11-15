@@ -1,5 +1,5 @@
 [package]
-name = "workbench"
+name = "lathe-workbench"
 description = "Workbench and layout models for Lathe, without rendering."
 version.workspace = true
 edition.workspace = true
