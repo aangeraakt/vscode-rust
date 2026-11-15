@@ -11,8 +11,10 @@ pub mod event;
 pub mod ids;
 pub mod lifecycle;
 pub mod services;
+pub mod uri;
 
 pub use event::{Emitter, Event};
 pub use ids::{CommandId, IdGenerator, LanguageId};
 pub use lifecycle::{Disposable, DisposableStore, LifecyclePhase, ShutdownReason};
 pub use services::ServiceRegistry;
+pub use uri::{Uri, UriError};
