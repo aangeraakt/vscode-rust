@@ -1,0 +1,152 @@
+# Rust CI for the Lathe workspace in `rust/`.
+#
+# The job named `rust-ci` (the last job below) is the single required status check on
+# `rust-port`. It always runs, so docs-only PRs get a result instead of waiting forever.
+# This workflow deliberately has no workflow-level `paths:` filter for that reason; the
+# `changes` job decides whether the Rust jobs run.
+
+name: rust-ci
+
+on:
+  pull_request:
+    branches: [rust-port]
+  push:
+    branches: [rust-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether the Rust jobs must run
+        id: filter
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          # Returns "true" when the Rust jobs must run. Any case we cannot compare
+          # confidently (manual dispatch, unknown base, missing commits) counts as changed.
+          zero_sha=0000000000000000000000000000000000000000
+          changed=true
+
+          if [ "$EVENT" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+            head="$PR_HEAD_SHA"
+          elif [ "$EVENT" = "push" ]; then
+            base="$PUSH_BEFORE"
+            head="$PUSH_SHA"
+          else
+            base=""
+            head=""
+          fi
+
+          if [ -n "$base" ] && [ "$base" != "$zero_sha" ] \
+            && git cat-file -e "$base^{commit}" 2>/dev/null \
+            && git cat-file -e "$head^{commit}" 2>/dev/null; then
+            if [ "$EVENT" = "pull_request" ]; then
+              # Changes the PR introduces, relative to the merge base.
+              diff_cmd=(git diff --name-only "$base...$head")
+            else
+              # Commits pushed to the branch.
+              diff_cmd=(git diff --name-only "$base" "$head")
+            fi
+            if files=$("${diff_cmd[@]}"); then
+              if printf '%s\n' "$files" | grep -Eq '^(rust/|\.github/workflows/rust-ci\.yml$)'; then
+                changed=true
+              else
+                changed=false
+              fi
+            fi
+          fi
+
+          echo "event=$EVENT base=${base:-none} rust-changed=$changed"
+          echo "rust=$changed" >> "$GITHUB_OUTPUT"
+
+  build-test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      CARGO_TERM_COLOR: always
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # Ubuntu installs no extra system packages yet. Crates that link native libraries
+      # (for example the window or terminal crates) must add an apt-get step here, guarded
+      # with `if: runner.os == 'Linux'`.
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+  # The only check to require on `rust-port`. Fails if a needed job failed or was cancelled.
+  rust-ci:
+    if: always()
+    needs: [changes, build-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate results
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          BUILD_TEST_RESULT: ${{ needs.build-test.result }}
+        run: |
+          echo "changes: $CHANGES_RESULT"
+          echo "build-test: $BUILD_TEST_RESULT"
+          if [ "$CHANGES_RESULT" = "failure" ] || [ "$CHANGES_RESULT" = "cancelled" ]; then
+            echo "::error::The change detection job $CHANGES_RESULT."
+            exit 1
+          fi
+          case "$BUILD_TEST_RESULT" in
+            success|skipped) echo "rust-ci passed." ;;
+            *)
+              echo "::error::The build-test matrix $BUILD_TEST_RESULT."
+              exit 1
+              ;;
+          esac
