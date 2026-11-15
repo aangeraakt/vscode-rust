@@ -108,7 +108,7 @@ drop through a COORDINATION.md request.
 | Bracket matching | `src/vs/editor/contrib/bracketMatching/` | editor | 04 | M1 | not started |
 | Snippets | `src/vs/editor/contrib/snippet/` | editor | 04 | M3 | not started |
 | Linked editing, smart select, word highlighter | `src/vs/editor/contrib/{linkedEditing,smartSelect,wordHighlighter}/` | editor | 04 | M3 | not started |
-| Line layout, scroll model | `src/vs/editor/common/viewLayout/` | editor-view | 05 | M1 | not started |
+| Line layout, scroll model | `src/vs/editor/common/viewLayout/` | editor-view | 05 | M1 | in progress (role 05, PR #18) |
 | View: view lines, cursors, selections | `src/vs/editor/browser/view/`, `viewParts/{viewLines,viewCursors,selections,currentLineHighlight}/` | editor-view | 05 | M1 | not started |
 | View: gutter (line numbers, glyph margin, folding margin) | `src/vs/editor/browser/viewParts/{lineNumbers,glyphMargin,margin,marginDecorations,linesDecorations}/` | editor-view | 05 | M1 | not started |
 | View: minimap, overview ruler, scrollbar | `src/vs/editor/browser/viewParts/{minimap,overviewRuler,editorScrollbar,scrollDecoration}/` | editor-view | 05 | M1 | not started |
