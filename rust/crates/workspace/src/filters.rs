@@ -594,6 +594,31 @@ pub fn fuzzy_score_str(
     )
 }
 
+/// `anyScore`: the first [`fuzzy_score`] (weak first match allowed) from any of the first 13
+/// pattern positions, else score 0 with no matches.
+pub fn any_score(
+    pattern: &[u16],
+    pattern_low: &[u16],
+    pattern_pos: usize,
+    word: &[u16],
+    word_low: &[u16],
+    word_pos: usize,
+    _options: FuzzyScoreOptions,
+) -> Option<FuzzyScore> {
+    let options = FuzzyScoreOptions {
+        first_match_can_be_weak: true,
+        boost_full_match: true,
+    };
+    let max = pattern.len().min(13);
+    (pattern_pos..max)
+        .find_map(|p| fuzzy_score(pattern, pattern_low, p, word, word_low, word_pos, options))
+        .or(Some(FuzzyScore {
+            score: 0,
+            word_start: word_pos,
+            matches: Vec::new(),
+        }))
+}
+
 /// `createMatches`: the highlight ranges of a score.
 pub fn create_matches(score: Option<&FuzzyScore>) -> Vec<Match> {
     let Some(score) = score else {
@@ -1001,4 +1026,111 @@ fn do_score(
         score -= if is_gap_location { 3 } else { 5 };
     }
     score
+}
+
+// --- graceful ---
+
+/// `fuzzyScoreGracefulAggressive`: like [`fuzzy_score_graceful`], but always tries the typo
+/// permutations to find a better alignment.
+pub fn fuzzy_score_graceful_aggressive(
+    pattern: &[u16],
+    pattern_low: &[u16],
+    pattern_pos: usize,
+    word: &[u16],
+    word_low: &[u16],
+    word_pos: usize,
+    options: FuzzyScoreOptions,
+) -> Option<FuzzyScore> {
+    fuzzy_score_with_permutations(
+        pattern,
+        pattern_low,
+        pattern_pos,
+        word,
+        word_low,
+        word_pos,
+        true,
+        options,
+    )
+}
+
+/// `fuzzyScoreGraceful`: [`fuzzy_score`], falling back to patterns with two neighbouring
+/// characters swapped (a 3 point penalty).
+pub fn fuzzy_score_graceful(
+    pattern: &[u16],
+    pattern_low: &[u16],
+    pattern_pos: usize,
+    word: &[u16],
+    word_low: &[u16],
+    word_pos: usize,
+    options: FuzzyScoreOptions,
+) -> Option<FuzzyScore> {
+    fuzzy_score_with_permutations(
+        pattern,
+        pattern_low,
+        pattern_pos,
+        word,
+        word_low,
+        word_pos,
+        false,
+        options,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fuzzy_score_with_permutations(
+    pattern: &[u16],
+    pattern_low: &[u16],
+    pattern_pos: usize,
+    word: &[u16],
+    word_low: &[u16],
+    word_pos: usize,
+    aggressive: bool,
+    options: FuzzyScoreOptions,
+) -> Option<FuzzyScore> {
+    let mut top = fuzzy_score(
+        pattern,
+        pattern_low,
+        pattern_pos,
+        word,
+        word_low,
+        word_pos,
+        options,
+    );
+    if top.is_some() && !aggressive {
+        return top;
+    }
+    if pattern.len() >= 3 {
+        // Try a few (max 7) permutations that swap neighbouring characters.
+        let tries = (pattern.len() - 1).min(7);
+        for moving_pattern_pos in pattern_pos + 1..tries {
+            if let Some(new_pattern) = next_typo_permutation(pattern, moving_pattern_pos) {
+                let low = to_lower_utf16(&new_pattern);
+                let candidate = fuzzy_score(
+                    &new_pattern,
+                    &low,
+                    pattern_pos,
+                    word,
+                    word_low,
+                    word_pos,
+                    options,
+                );
+                if let Some(mut candidate) = candidate {
+                    candidate.score -= 3; // Permutation penalty.
+                    if top.as_ref().is_none_or(|top| candidate.score > top.score) {
+                        top = Some(candidate);
+                    }
+                }
+            }
+        }
+    }
+    top
+}
+
+fn next_typo_permutation(pattern: &[u16], pattern_pos: usize) -> Option<Vec<u16>> {
+    if pattern_pos + 1 >= pattern.len() || pattern[pattern_pos] == pattern[pattern_pos + 1] {
+        return None;
+    }
+    let mut result = pattern.to_vec();
+    result.swap(pattern_pos, pattern_pos + 1);
+    Some(result)
 }
