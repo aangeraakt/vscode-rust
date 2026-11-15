@@ -85,13 +85,19 @@ pub fn is_override_key(key: &str) -> bool {
 /// The distinct, trimmed, non-empty identifiers of an override key (`overrideIdentifiersFromKey`).
 pub fn override_identifiers_from_key(key: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    if is_override_key(key) {
-        for part in key.split('[').skip(1) {
-            let id = part.trim_end_matches(']').trim();
-            if !id.is_empty() && !out.iter().any(|o| o == id) {
-                out.push(id.to_owned());
-            }
+    if !is_override_key(key) {
+        return out;
+    }
+    // Same scan as `is_override_key`: each `[` opens a group that runs to the next `]`, so
+    // `[a[b]` is the single identifier `a[b`, as with OVERRIDE_IDENTIFIER_REGEX.
+    let mut rest = key;
+    while let Some(inner) = rest.strip_prefix('[') {
+        let end = inner.find(']').expect("validated by is_override_key");
+        let id = inner[..end].trim();
+        if !id.is_empty() && !out.iter().any(|o| o == id) {
+            out.push(id.to_owned());
         }
+        rest = &inner[end + 1..];
     }
     out
 }
@@ -179,6 +185,16 @@ impl ConfigurationModel {
         Self::default()
     }
 
+    /// Builds a model from its parts, like the TypeScript constructor. `contents` is a value
+    /// tree; `keys` are the dotted keys that produced it.
+    pub fn new(contents: Object, keys: Vec<String>, overrides: Vec<ConfigurationOverride>) -> Self {
+        Self {
+            contents,
+            keys,
+            overrides,
+        }
+    }
+
     /// Builds a model from raw settings (top-level dotted keys and `[id]` blocks), as
     /// `ConfigurationModelParser.doParseRaw` does after registry filtering. Returns the conflicts
     /// that TypeScript logs.
@@ -231,6 +247,24 @@ impl ConfigurationModel {
             None | Some("") => Some(Value::Object(self.contents.clone())),
             Some(s) => get_configuration_value(&self.contents, s).cloned(),
         }
+    }
+
+    /// The distinct keys set by every block that names `identifier`
+    /// (`getKeysForOverrideIdentifier`).
+    pub fn keys_for_override_identifier(&self, identifier: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for o in self
+            .overrides
+            .iter()
+            .filter(|o| o.identifiers.iter().any(|i| i == identifier))
+        {
+            for k in &o.keys {
+                if !out.contains(k) {
+                    out.push(k.clone());
+                }
+            }
+        }
+        out
     }
 
     /// All distinct override identifiers, in order of appearance.
@@ -320,7 +354,9 @@ impl ConfigurationModel {
         result
     }
 
-    /// Sets `key` and records it as a new key even if already present (`addValue`).
+    /// Sets `key` and records it as a new key even if already present (`addValue`). On a
+    /// conflict the value is not set, but the key is still recorded and the conflict returned,
+    /// as TypeScript logs and continues. The same holds for [`ConfigurationModel::set_value`].
     pub fn add_value(&mut self, key: &str, value: Value) -> Result<(), String> {
         self.update_value(key, value, true)
     }
@@ -346,7 +382,7 @@ impl ConfigurationModel {
     }
 
     fn update_value(&mut self, key: &str, value: Value, add: bool) -> Result<(), String> {
-        add_to_value_tree(&mut self.contents, key, value)?;
+        let mut result = add_to_value_tree(&mut self.contents, key, value);
         if add || !self.keys.iter().any(|k| k == key) {
             self.keys.push(key.to_owned());
         }
@@ -372,11 +408,11 @@ impl ConfigurationModel {
                 Some(existing) => *existing = new,
                 None => self.overrides.push(new),
             }
-            if let Some(c) = conflicts.into_iter().next() {
-                return Err(c);
+            if let (Ok(()), Some(c)) = (&result, conflicts.into_iter().next()) {
+                result = Err(c);
             }
         }
-        Ok(())
+        result
     }
 }
 
@@ -441,72 +477,277 @@ mod tests {
         assert_eq!(Value::Object(tree), json!({"a": {"d": 2}}));
     }
 
+    fn cm(
+        contents: Value,
+        keys: &[&str],
+        overrides: Vec<ConfigurationOverride>,
+    ) -> ConfigurationModel {
+        ConfigurationModel::new(
+            obj(contents),
+            keys.iter().map(|k| k.to_string()).collect(),
+            overrides,
+        )
+    }
+
+    fn ov(ids: &[&str], contents: Value, keys: &[&str]) -> ConfigurationOverride {
+        ConfigurationOverride {
+            identifiers: ids.iter().map(|k| k.to_string()).collect(),
+            keys: keys.iter().map(|k| k.to_string()).collect(),
+            contents: obj(contents),
+        }
+    }
+
+    fn contents(m: &ConfigurationModel) -> Value {
+        Value::Object(m.contents().clone())
+    }
+
     #[test]
-    fn set_add_remove_values() {
-        // configurationModels.test.ts: "setValue for a key that has no sections", "removeValue"
-        let mut m = model(json!({"a": {"b": 1}}));
-        m.set_value("a.b", json!(2)).unwrap();
-        m.set_value("c", json!(3)).unwrap();
-        assert_eq!(m.get_value(None), Some(json!({"a": {"b": 2}, "c": 3})));
-        assert_eq!(m.keys(), ["a", "a.b", "c"]);
-        m.remove_value("c");
-        assert_eq!(m.get_value(Some("c")), None);
+    fn parse_override_identifiers() {
+        // "parse configuration model with single / multiple / multiple duplicate override identifiers"
+        let cases = [
+            ("[x]", vec!["x"]),
+            ("[x][y]", vec!["x", "y"]),
+            ("[x][y][x][z]", vec!["x", "y", "z"]),
+        ];
+        for (key, ids) in cases {
+            let m = model(json!({ key: {"a": 1} }));
+            assert_eq!(m.overrides(), [ov(&ids, json!({"a": 1}), &["a"])]);
+        }
+        assert_eq!(override_identifiers_from_key("[a[b]"), ["a[b"]);
+    }
+
+    #[test]
+    fn set_value_cases() {
+        // "setValue for a key that has ..." (all seven cases)
+        let cases = [
+            (
+                json!({"a": {"b": 1}}),
+                vec!["a.b"],
+                "f",
+                1,
+                json!({"a": {"b": 1}, "f": 1}),
+                vec!["a.b", "f"],
+            ),
+            (
+                json!({"a": {"b": 1}, "f": 1}),
+                vec!["a.b", "f"],
+                "f",
+                3,
+                json!({"a": {"b": 1}, "f": 3}),
+                vec!["a.b", "f"],
+            ),
+            (
+                json!({"a": {"b": 1}, "f": 1}),
+                vec!["a.b", "f"],
+                "b.c",
+                1,
+                json!({"a": {"b": 1}, "f": 1, "b": {"c": 1}}),
+                vec!["a.b", "f", "b.c"],
+            ),
+            (
+                json!({"a": {"b": 1}, "b": {"c": 1}, "f": 1}),
+                vec!["a.b", "b.c", "f"],
+                "b.c",
+                3,
+                json!({"a": {"b": 1}, "b": {"c": 3}, "f": 1}),
+                vec!["a.b", "b.c", "f"],
+            ),
+            (
+                json!({"a": {"b": 1}, "f": 1}),
+                vec!["a.b", "f"],
+                "a.c",
+                1,
+                json!({"a": {"b": 1, "c": 1}, "f": 1}),
+                vec!["a.b", "f", "a.c"],
+            ),
+            (
+                json!({"a": {"b": 1, "c": 1}, "f": 1}),
+                vec!["a.b", "a.c", "f"],
+                "a.c",
+                3,
+                json!({"a": {"b": 1, "c": 3}, "f": 1}),
+                vec!["a.b", "a.c", "f"],
+            ),
+            (
+                json!({"a": {"b": {}}, "f": 1}),
+                vec!["a.b", "f"],
+                "a.b.c",
+                1,
+                json!({"a": {"b": {"c": 1}}, "f": 1}),
+                vec!["a.b", "f", "a.b.c"],
+            ),
+        ];
+        for (start, keys, key, value, expected, expected_keys) in cases {
+            let mut m = cm(start, &keys, vec![]);
+            m.set_value(key, json!(value)).unwrap();
+            assert_eq!(contents(&m), expected, "{key}");
+            assert_eq!(m.keys(), expected_keys, "{key}");
+        }
+    }
+
+    #[test]
+    fn remove_value_cases() {
+        // "removeValue: remove a non existing key / a single segmented key / a multi segmented key"
+        let mut m = cm(json!({"a": {"b": 2}}), &["a.b"], vec![]);
+        m.remove_value("a.b.c");
+        assert_eq!(contents(&m), json!({"a": {"b": 2}}));
+        assert_eq!(m.keys(), ["a.b"]);
+        let mut m = cm(json!({"a": 1}), &["a"], vec![]);
+        m.remove_value("a");
+        assert_eq!(contents(&m), json!({}));
+        assert!(m.keys().is_empty());
+        let mut m = cm(json!({"a": {"b": 1}}), &["a.b"], vec![]);
+        m.remove_value("a.b");
+        assert_eq!(contents(&m), json!({}));
+        assert!(m.keys().is_empty());
+    }
+
+    #[test]
+    fn override_cases() {
+        // "get overriding configuration ..." cases that Rust can express (an override whose
+        // contents is not an object cannot be built here)
+        let base = json!({"a": {"b": 1}, "f": 1});
+        let m = cm(
+            base.clone(),
+            &[],
+            vec![ov(&["c"], json!({"a": {"d": 1}}), &["a"])],
+        );
+        assert_eq!(
+            contents(&m.override_for("c")),
+            json!({"a": {"b": 1, "d": 1}, "f": 1})
+        );
+        assert_eq!(contents(&m.override_for("xyz")), base);
+        let m = cm(
+            base.clone(),
+            &[],
+            vec![ov(&["c"], json!({"a": {"d": 1}, "g": 1}), &["a", "g"])],
+        );
+        assert_eq!(
+            contents(&m.override_for("c")),
+            json!({"a": {"b": 1, "d": 1}, "f": 1, "g": 1})
+        );
+        let m = cm(
+            base,
+            &[],
+            vec![ov(
+                &["c"],
+                json!({"a": {"d": 1}, "f": {"g": 1}}),
+                &["a", "f"],
+            )],
+        );
+        assert_eq!(
+            contents(&m.override_for("c")),
+            json!({"a": {"b": 1, "d": 1}, "f": {"g": 1}})
+        );
+        let base = json!({"a": {"b": 1}, "f": {"g": 1}});
+        let m = cm(
+            base.clone(),
+            &[],
+            vec![ov(&["c"], json!({"a": {"d": 1}, "f": 1}), &["a", "f"])],
+        );
+        assert_eq!(
+            contents(&m.override_for("c")),
+            json!({"a": {"b": 1, "d": 1}, "f": 1})
+        );
+        let m = cm(base.clone(), &[], vec![ov(&["c"], json!({}), &[])]);
+        assert_eq!(contents(&m.override_for("c")), base);
+    }
+
+    #[test]
+    fn simple_and_recursive_merge() {
+        // "simple merge", "recursive merge"
+        let base = cm(json!({"a": 1, "b": 2}), &["a", "b"], vec![]);
+        let add = cm(json!({"a": 3, "c": 4}), &["a", "c"], vec![]);
+        let result = base.merge(&[&add]);
+        assert_eq!(contents(&result), json!({"a": 3, "b": 2, "c": 4}));
+        assert_eq!(result.keys(), ["a", "b", "c"]);
+        let base = cm(json!({"a": {"b": 1}}), &["a.b"], vec![]);
+        let add = cm(json!({"a": {"b": 2}}), &["a.b"], vec![]);
+        let result = base.merge(&[&add]);
+        assert_eq!(contents(&result), json!({"a": {"b": 2}}));
+        assert_eq!(result.get_value(Some("a")), Some(json!({"b": 2})));
+        assert_eq!(result.keys(), ["a.b"]);
+    }
+
+    #[test]
+    fn override_with_multiple_identifiers() {
+        // "Test override gives all content merged with overrides",
+        // "Test override when an override has multiple identifiers",
+        // "Test override when an identifier is defined in multiple overrides"
+        let m = cm(
+            json!({"a": 1, "c": 1}),
+            &[],
+            vec![ov(&["b"], json!({"a": 2}), &["a"])],
+        );
+        assert_eq!(contents(&m.override_for("b")), json!({"a": 2, "c": 1}));
+
+        let m = cm(
+            json!({"a": 1, "c": 1}),
+            &["a", "c"],
+            vec![ov(&["x", "y"], json!({"a": 2}), &["a"])],
+        );
+        for id in ["x", "y"] {
+            let actual = m.override_for(id);
+            assert_eq!(contents(&actual), json!({"a": 2, "c": 1}));
+            assert_eq!(actual.keys(), ["a", "c"]);
+            assert_eq!(m.keys_for_override_identifier(id), ["a"]);
+        }
+
+        let m = cm(
+            json!({"a": 1, "c": 1}),
+            &["a", "c"],
+            vec![
+                ov(&["x"], json!({"a": 3, "b": 1}), &["a", "b"]),
+                ov(&["x", "y"], json!({"a": 2}), &["a"]),
+            ],
+        );
+        let actual = m.override_for("x");
+        assert_eq!(contents(&actual), json!({"a": 3, "c": 1, "b": 1}));
+        assert_eq!(actual.keys(), ["a", "c"]);
+        assert_eq!(m.keys_for_override_identifier("x"), ["a", "b"]);
+    }
+
+    #[test]
+    fn merge_with_multiple_identifiers() {
+        // "Test merge when configuration models have multiple identifiers"
+        let m = cm(
+            json!({"a": 1, "c": 1}),
+            &["a", "c"],
+            vec![
+                ov(&["y"], json!({"c": 1}), &["c"]),
+                ov(&["x", "y"], json!({"a": 2}), &["a"]),
+            ],
+        );
+        let target = cm(
+            json!({"a": 2, "b": 1}),
+            &["a", "b"],
+            vec![
+                ov(&["x"], json!({"a": 3, "b": 2}), &["a", "b"]),
+                ov(&["x", "y"], json!({"b": 3}), &["b"]),
+            ],
+        );
+        let actual = m.merge(&[&target]);
+        assert_eq!(contents(&actual), json!({"a": 2, "c": 1, "b": 1}));
+        assert_eq!(actual.keys(), ["a", "c", "b"]);
+        assert_eq!(
+            actual.overrides(),
+            [
+                ov(&["y"], json!({"c": 1}), &["c"]),
+                ov(&["x", "y"], json!({"a": 2, "b": 3}), &["a", "b"]),
+                ov(&["x"], json!({"a": 3, "b": 2}), &["a", "b"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn conflicting_set_value_still_records_key() {
+        let mut m = cm(json!({"a": 1}), &["a"], vec![]);
+        assert_eq!(
+            m.set_value("a.b", json!(2)),
+            Err("Ignoring a.b as a is 1".to_owned())
+        );
+        assert_eq!(contents(&m), json!({"a": 1}));
         assert_eq!(m.keys(), ["a", "a.b"]);
-    }
-
-    #[test]
-    fn merge_layers_later_wins() {
-        // configurationModels.test.ts: "merge"
-        let base = model(json!({"a": 1, "b": {"c": 1, "d": 1}}));
-        let user = model(json!({"b.c": 2, "e": 3}));
-        let merged = base.merge(&[&user]);
-        assert_eq!(
-            merged.get_value(None),
-            Some(json!({"a": 1, "b": {"c": 2, "d": 1}, "e": 3}))
-        );
-        assert_eq!(merged.keys(), ["a", "b", "b.c", "e"]);
-    }
-
-    #[test]
-    fn merge_combines_override_blocks() {
-        let a = model(json!({"[ts]": {"x": 1}}));
-        let b = model(json!({"[ts]": {"y": 2}, "[md]": {"z": 3}}));
-        let merged = a.merge(&[&b]);
-        assert_eq!(merged.overrides().len(), 2);
-        assert_eq!(
-            Value::Object(merged.overrides()[0].contents.clone()),
-            json!({"x": 1, "y": 2})
-        );
-        assert_eq!(merged.overrides()[0].keys, ["x", "y"]);
-    }
-
-    #[test]
-    fn language_override_merges_over_base() {
-        // configurationModels.test.ts: "override"
-        let m = model(json!({
-            "editor.tabSize": 4,
-            "editor.wordWrap": "off",
-            "[markdown]": {"editor.wordWrap": "on"}
-        }));
-        let md = m.override_for("markdown");
-        assert_eq!(md.get_value(Some("editor.wordWrap")), Some(json!("on")));
-        assert_eq!(md.get_value(Some("editor.tabSize")), Some(json!(4)));
-        assert_eq!(m.override_for("rust"), m);
-        assert_eq!(m.override_identifiers(), ["markdown"]);
-    }
-
-    #[test]
-    fn single_identifier_block_wins_over_multi() {
-        // configurationModels.test.ts: "override when there are multiple language overrides"
-        let m = model(json!({
-            "a": {"x": 0},
-            "[ts]": {"a.x": 1},
-            "[js][ts]": {"a.x": 2, "a.y": 2}
-        }));
-        let ts = m.override_for("ts");
-        assert_eq!(ts.get_value(Some("a")), Some(json!({"x": 1, "y": 2})));
-        let js = m.override_for("js");
-        assert_eq!(js.get_value(Some("a")), Some(json!({"x": 2, "y": 2})));
     }
 
     #[test]
