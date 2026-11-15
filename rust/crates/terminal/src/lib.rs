@@ -4,13 +4,16 @@
 //! - [`environment`]: environment merge rules (`terminalEnvironment.ts`, `objects.ts`);
 //! - [`launch`]: shell launch configuration and the checks run before spawning
 //!   (`terminalProcess.ts` `_validateCwd` / `_validateExecutable`, `base/node/processes.ts`
-//!   `findExecutable`).
+//!   `findExecutable`);
+//! - [`process`]: the PTY process host (`TerminalProcess`), using `portable-pty`.
 //!
-//! Following ADR 0005, this crate does blocking process and PTY work only when the caller runs
-//! it on the I/O runtime. Results return to the UI thread through events.
+//! Following ADR 0005, [`TerminalProcess::spawn`] starts I/O threads and reports through a channel
+//! of [`TerminalEvent`]s, which the caller forwards to the UI thread.
 
 pub mod environment;
 pub mod launch;
+pub mod process;
 
 pub use environment::{EnvironmentPatch, ProcessEnvironment, merge_environments};
 pub use launch::{LaunchError, ShellLaunchConfig, validate_cwd, validate_executable};
+pub use process::{TerminalEvent, TerminalProcess};
