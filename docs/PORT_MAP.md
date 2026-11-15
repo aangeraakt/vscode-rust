@@ -117,7 +117,7 @@ drop through a COORDINATION.md request.
 | GPU line rendering | `src/vs/editor/browser/gpu/`, `viewParts/{viewLinesGpu,rulersGpu,gpuMark}/` | editor-view | 05 | M1 | not started |
 | Editor input controller (mouse, keyboard, IME) | `src/vs/editor/browser/controller/` | editor-view | 05 | M1 | not started |
 | Sticky scroll, unicode highlighter, long lines | `src/vs/editor/contrib/{stickyScroll,unicodeHighlighter,longLinesHelper,unusualLineTerminators}/` | editor-view | 05 | M3 | not started |
-| Tokenization and language configuration | `src/vs/editor/common/{tokens,languages,tokenizationRegistry.ts,encodedTokenAttributes.ts}`, `contrib/tokenization/` | language | 06 | M3 | not started |
+| Tokenization and language configuration | `src/vs/editor/common/{tokens,languages,tokenizationRegistry.ts,encodedTokenAttributes.ts}`, `contrib/tokenization/` | language | 06 | M3 | in progress (role 06, PR #19) |
 | Language features: hover, suggest, parameter hints | `src/vs/editor/contrib/{hover,suggest,parameterHints}/` | language | 06 | M3 | not started |
 | Language features: go to, peek, rename, references | `src/vs/editor/contrib/{gotoSymbol,peekView,rename,gotoError}/` | language | 06 | M3 | not started |
 | Language features: code actions, code lens, inlay hints, format, links, colors, semantic tokens, document symbols | `src/vs/editor/contrib/{codeAction,codelens,inlayHints,format,links,colorPicker,semanticTokens,documentSymbols}/` | language | 06 | M3 | not started |
