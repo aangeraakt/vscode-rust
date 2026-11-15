@@ -5,66 +5,13 @@
 //! file service (events, `canDelete` and friends) or the file-descriptor API are not ported here.
 
 use std::fs;
-use std::path::{Path, PathBuf};
 
-use lathe_workspace::DiskFileSystemProvider;
-use tempfile::TempDir;
+mod common;
+use common::*;
 use vscode_api::files::{
     FileAtomicOptions, FileDeleteOptions, FilePermission, FileReadOptions, FileSystemErrorCode,
-    FileSystemProvider, FileType, Stat,
+    FileSystemProvider, FileType,
 };
-use vscode_api::uri::Uri;
-
-struct Fixture {
-    dir: TempDir,
-    fs: DiskFileSystemProvider,
-}
-
-impl Fixture {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().expect("temp dir");
-        // A small tree that most cases start from: a file, a folder with files, and an empty folder.
-        fs::write(dir.path().join("lorem.txt"), "Lorem ipsum").unwrap();
-        fs::create_dir_all(dir.path().join("deep").join("nested")).unwrap();
-        fs::write(dir.path().join("deep").join("conway.js"), "// life").unwrap();
-        fs::write(dir.path().join("deep").join("nested").join("a.txt"), "a").unwrap();
-        fs::create_dir(dir.path().join("empty")).unwrap();
-        Self {
-            dir,
-            fs: DiskFileSystemProvider::new(),
-        }
-    }
-
-    fn path(&self, relative: &str) -> PathBuf {
-        self.dir.path().join(relative)
-    }
-
-    fn uri(&self, relative: &str) -> Uri {
-        uri_of(&self.path(relative))
-    }
-}
-
-fn uri_of(path: &Path) -> Uri {
-    Uri::file(&path.to_string_lossy())
-}
-
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("runtime")
-        .block_on(future)
-}
-
-fn stat(fixture: &Fixture, relative: &str) -> Stat {
-    block_on(fixture.fs.stat(&fixture.uri(relative))).expect("stat succeeds")
-}
-
-fn error_code<T: std::fmt::Debug>(
-    result: Result<T, vscode_api::files::FileSystemError>,
-) -> FileSystemErrorCode {
-    result.expect_err("operation fails").code
-}
 
 // stat
 

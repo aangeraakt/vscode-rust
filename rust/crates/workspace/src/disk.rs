@@ -11,12 +11,16 @@
 //! - Directory listings are sorted by name. Upstream returns them in completion order.
 //! - Creation time falls back to modification time where the platform does not report one.
 //! - Recursive delete does not clear read-only entries first, as upstream does on Windows.
+//! - Writes are not retried after a failed write, as upstream does three times.
+//! - Atomic writes check the target (existence, `create`, `overwrite`, folder) before the
+//!   temporary file is written. Upstream skips these checks for atomic writes, so it would
+//!   replace an existing file even when `overwrite` is false.
 //! - Watching is not implemented yet; `watch` returns a no-op disposable.
 
-use std::fs::{self, Metadata};
-use std::io;
+use std::fs::{self, File, Metadata, OpenOptions, Permissions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use vscode_api::event::{Emitter, Event};
 use vscode_api::files::{
@@ -45,7 +49,13 @@ impl DiskFileSystemProvider {
 
 impl FileSystemProvider for DiskFileSystemProvider {
     fn capabilities(&self) -> FileSystemProviderCapabilities {
-        let base = FileSystemProviderCapabilities::FILE_ATOMIC_DELETE;
+        let base = FileSystemProviderCapabilities::FILE_READ_WRITE
+            | FileSystemProviderCapabilities::FILE_FOLDER_COPY
+            | FileSystemProviderCapabilities::FILE_WRITE_UNLOCK
+            | FileSystemProviderCapabilities::FILE_APPEND
+            | FileSystemProviderCapabilities::FILE_ATOMIC_READ
+            | FileSystemProviderCapabilities::FILE_ATOMIC_WRITE
+            | FileSystemProviderCapabilities::FILE_ATOMIC_DELETE;
         if path_case_sensitive() {
             base | FileSystemProviderCapabilities::PATH_CASE_SENSITIVE
         } else {
@@ -103,19 +113,27 @@ impl FileSystemProvider for DiskFileSystemProvider {
         })
     }
 
-    // Write, rename and copy follow in the next change of this crate. Until then the contract
-    // defaults apply: the capability bits stay unset and the calls answer `Unavailable`.
-
     fn rename<'a>(
         &'a self,
         from: &'a Uri,
         to: &'a Uri,
-        _options: FileOverwriteOptions,
+        options: FileOverwriteOptions,
     ) -> BoxFuture<'a, FileResult<()>> {
         Box::pin(async move {
-            Err(unavailable(format!(
-                "rename {from} to {to} is not implemented yet"
-            )))
+            let (from, to) = (to_path(from)?, to_path(to)?);
+            run_blocking(move || rename_path(&from, &to, options.overwrite)).await
+        })
+    }
+
+    fn copy<'a>(
+        &'a self,
+        from: &'a Uri,
+        to: &'a Uri,
+        options: FileOverwriteOptions,
+    ) -> BoxFuture<'a, FileResult<()>> {
+        Box::pin(async move {
+            let (from, to) = (to_path(from)?, to_path(to)?);
+            run_blocking(move || copy_path(&from, &to, options.overwrite)).await
         })
     }
 
@@ -139,13 +157,21 @@ impl FileSystemProvider for DiskFileSystemProvider {
     fn write_file<'a>(
         &'a self,
         resource: &'a Uri,
-        _content: &'a [u8],
-        _options: FileWriteOptions,
+        content: &'a [u8],
+        options: FileWriteOptions,
     ) -> BoxFuture<'a, FileResult<()>> {
         Box::pin(async move {
-            Err(unavailable(format!(
-                "writing {resource} is not implemented yet"
-            )))
+            let path = to_path(resource)?;
+            let temp =
+                atomic_postfix(options.atomic.as_ref()).map(|postfix| sibling(&path, postfix));
+            // The target is locked before the temporary file, as upstream does.
+            let _target = self.locks.lock(lock_key(&path)).await;
+            let _temp = match &temp {
+                Some(temp) => Some(self.locks.lock(lock_key(temp)).await),
+                None => None,
+            };
+            let content = content.to_vec();
+            run_blocking(move || write_path(&path, temp.as_deref(), &content, &options)).await
         })
     }
 }
@@ -384,6 +410,289 @@ fn sibling(path: &Path, postfix: &str) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(postfix);
     path.with_file_name(name)
+}
+
+// Writes.
+
+/// Whole-file write (`writeFile`). The target is validated for every write mode. Atomic writes
+/// go through `temp` unless the target is a link, as upstream refuses atomic writes to links.
+fn write_path(
+    path: &Path,
+    temp: Option<&Path>,
+    content: &[u8],
+    options: &FileWriteOptions,
+) -> FileResult<()> {
+    check_target(path, options)?;
+    match temp {
+        Some(temp) if !is_symlink(path) => write_atomic(path, temp, content, options),
+        _ => write_direct(path, content, options),
+    }
+}
+
+fn check_target(path: &Path, options: &FileWriteOptions) -> FileResult<()> {
+    match fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => Err(FileSystemError::new(
+            FileSystemErrorCode::FileIsADirectory,
+            format!("{} is a directory", path.display()),
+        )),
+        Ok(_) if !options.overwrite => Err(FileSystemError::new(
+            FileSystemErrorCode::FileExists,
+            "File already exists",
+        )),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound && options.create => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Err(FileSystemError::new(
+            FileSystemErrorCode::FileNotFound,
+            "File does not exist",
+        )),
+        Err(err) => Err(io_error(err)),
+    }
+}
+
+fn write_direct(path: &Path, content: &[u8], options: &FileWriteOptions) -> FileResult<()> {
+    if options.unlock {
+        unlock(path);
+    }
+    let mut file = open_for_write(path, options.append).map_err(|err| write_error(path, err))?;
+    file.write_all(content)
+        .map_err(|err| write_error(path, err))?;
+    // Upstream flushes a written file on close and only logs a failure, so a failed flush is
+    // not an error here either.
+    let _ = file.sync_data();
+    Ok(())
+}
+
+/// Writes `temp` next to `path`, then renames it over `path`. Readers see the old or the new
+/// contents, never a partial file. A failed write or rename removes the temporary file.
+fn write_atomic(
+    path: &Path,
+    temp: &Path,
+    content: &[u8],
+    options: &FileWriteOptions,
+) -> FileResult<()> {
+    let temp_options = FileWriteOptions {
+        create: true,
+        overwrite: true,
+        atomic: None,
+        ..options.clone()
+    };
+    let written =
+        write_direct(temp, content, &temp_options).and_then(|()| rename_path(temp, path, true));
+    if written.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    written
+}
+
+/// Opens `path` for a whole-file write, truncating it, or for appending.
+fn open_for_write(path: &Path, append: bool) -> io::Result<File> {
+    if append {
+        return OpenOptions::new().append(true).create(true).open(path);
+    }
+    #[cfg(windows)]
+    {
+        // Upstream opens with "r+" and truncates first, because "w" (CREATE_ALWAYS) fails on
+        // hidden and system files. Opening an existing file keeps those working.
+        if let Ok(file) = OpenOptions::new().write(true).open(path) {
+            if file.set_len(0).is_ok() {
+                return Ok(file);
+            }
+        }
+    }
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+}
+
+/// Makes a read-only file writable by its owner (`unlock`). A failure is ignored, and the write
+/// then reports its own error, as upstream does.
+fn unlock(path: &Path) {
+    if let Ok(meta) = fs::metadata(path) {
+        if !owner_writable(&meta) {
+            let _ = fs::set_permissions(path, with_owner_writable(meta.permissions()));
+        }
+    }
+}
+
+#[cfg(unix)]
+fn with_owner_writable(mut perms: Permissions) -> Permissions {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = perms.mode();
+    perms.set_mode(mode | 0o200);
+    perms
+}
+
+#[cfg(not(unix))]
+#[allow(clippy::permissions_set_readonly_false)] // that lint is about world-writable Unix modes
+fn with_owner_writable(mut perms: Permissions) -> Permissions {
+    perms.set_readonly(false);
+    perms
+}
+
+/// A write error on a read-only file is reported as `FILE_WRITE_LOCKED`, which tells the caller
+/// the file can be unlocked (`toFileSystemProviderWriteError`).
+fn write_error(path: &Path, err: io::Error) -> FileSystemError {
+    let mut mapped = io_error(err);
+    if mapped.code == FileSystemErrorCode::NoPermissions
+        && fs::metadata(path).is_ok_and(|meta| !owner_writable(&meta))
+    {
+        mapped.code = FileSystemErrorCode::FileWriteLocked;
+    }
+    mapped
+}
+
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_symlink())
+}
+
+// Rename and copy.
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TransferMode {
+    Move,
+    Copy,
+}
+
+/// `stat` that follows links, falling back to the link itself when its target is missing.
+fn stat_ignore_error(path: &Path) -> Option<Metadata> {
+    fs::metadata(path)
+        .or_else(|_| fs::symlink_metadata(path))
+        .ok()
+}
+
+/// Checks a rename or copy, and removes the target when it must be replaced
+/// (`validateMoveCopy`). Returns whether the source is a folder.
+fn validate_transfer(
+    from: &Path,
+    to: &Path,
+    mode: TransferMode,
+    overwrite: bool,
+) -> FileResult<bool> {
+    let from_meta = stat_ignore_error(from).ok_or_else(|| {
+        FileSystemError::new(
+            FileSystemErrorCode::FileNotFound,
+            "File to move/copy does not exist",
+        )
+    })?;
+
+    if !path_case_sensitive() && eq_ignore_case(from, to) {
+        // The same file under another case on a case-insensitive disk. A move renames it; a copy
+        // would overwrite itself.
+        return match mode {
+            TransferMode::Move => Ok(from_meta.is_dir()),
+            TransferMode::Copy => Err(FileSystemError::new(
+                FileSystemErrorCode::FileExists,
+                "File cannot be copied to same path with different path case",
+            )),
+        };
+    }
+
+    if mode == TransferMode::Copy && from_meta.is_dir() && to.starts_with(from) {
+        return Err(FileSystemError::new(
+            FileSystemErrorCode::Unknown,
+            format!("cannot copy {} into itself", from.display()),
+        ));
+    }
+
+    if let Some(to_meta) = stat_ignore_error(to) {
+        if !overwrite {
+            return Err(FileSystemError::new(
+                FileSystemErrorCode::FileExists,
+                "File at target already exists and thus will not be moved/copied to unless overwrite is specified",
+            ));
+        }
+        // A file can replace a file directly. Anything else is removed first.
+        if !(from_meta.is_file() && to_meta.is_file()) {
+            remove_recursive(to).map_err(io_error)?;
+        }
+    }
+    Ok(from_meta.is_dir())
+}
+
+fn eq_ignore_case(a: &Path, b: &Path) -> bool {
+    a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+}
+
+/// Renames `from` to `to`. Same paths are a no-op, as upstream simulates.
+fn rename_path(from: &Path, to: &Path, overwrite: bool) -> FileResult<()> {
+    if from == to {
+        return Ok(());
+    }
+    let source_is_dir = validate_transfer(from, to, TransferMode::Move, overwrite)?;
+    // On Windows, antivirus software briefly locks files that were just written, so a rename is
+    // retried for a while. A folder is only retried briefly when nothing gets replaced.
+    let timeout = if !cfg!(windows) {
+        Duration::ZERO
+    } else if source_is_dir && !overwrite {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_secs(60)
+    };
+    rename_with_retry(from, to, timeout).map_err(io_error)
+}
+
+fn rename_with_retry(from: &Path, to: &Path, timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match fs::rename(from, to) {
+            Err(err) if is_busy(&err) && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// A rename refused because another program holds the entry. Only Windows reports these.
+fn is_busy(err: &io::Error) -> bool {
+    cfg!(windows)
+        && (err.kind() == io::ErrorKind::PermissionDenied
+            || matches!(err.raw_os_error(), Some(32 | 33)))
+}
+
+/// Copies `from` to `to`. Same paths are a no-op, as upstream simulates.
+fn copy_path(from: &Path, to: &Path, overwrite: bool) -> FileResult<()> {
+    if from == to {
+        return Ok(());
+    }
+    validate_transfer(from, to, TransferMode::Copy, overwrite)?;
+    copy_entry(from, to).map_err(io_error)
+}
+
+/// Copies a file, a folder tree, or a link. Links are recreated as links, as upstream's
+/// `preserveSymlinks` does.
+fn copy_entry(from: &Path, to: &Path) -> io::Result<()> {
+    let meta = fs::symlink_metadata(from)?;
+    if meta.is_symlink() {
+        let target = fs::read_link(from)?;
+        let target_is_dir = fs::metadata(from).is_ok_and(|m| m.is_dir());
+        return create_symlink(&target, to, target_is_dir);
+    }
+    if meta.is_dir() {
+        fs::create_dir(to)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            copy_entry(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        return Ok(());
+    }
+    fs::copy(from, to).map(|_| ())
+}
+
+#[cfg(unix)]
+fn create_symlink(target: &Path, link: &Path, _target_is_dir: bool) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn create_symlink(target: &Path, link: &Path, target_is_dir: bool) -> io::Result<()> {
+    if target_is_dir {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    }
 }
 
 #[cfg(test)]
