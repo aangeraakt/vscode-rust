@@ -538,3 +538,6 @@ impl<'a> LineHeightChangeAccessor<'a> {
         self.had_change
     }
 }
+
+#[cfg(test)]
+mod tests;
