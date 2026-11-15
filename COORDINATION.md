@@ -44,7 +44,30 @@ the consuming role picks one up by opening a request PR that names the exact API
 
 Format: `- YYYY-MM-DD, role NN, PORT_MAP row "<area>": <blocker>; waiting on <role/PR>`
 
-_None._
+- 2026-11-15, role 07, PORT_MAP row "UI widgets: list, tree, table views": needs the draw layer API (ADR 0002) and a window; waiting on role 02, #37 (draw layer) and #31/#35 (window)
+- 2026-11-15, role 07, PORT_MAP row "UI widgets: inputs, buttons, toggles, menus, hover, dialog": needs the draw layer and a window; waiting on role 02, #37 (draw layer) and #31/#35 (window)
+- 2026-11-15, role 07, PORT_MAP row "Activity bar, sidebar, panel, auxiliary bar": needs the draw layer, a window and the grid; waiting on role 02, #37 (draw layer) and #31/#35 (window), role 07 (Phase 1, split view #38; grid not yet open)
+- 2026-11-15, role 07, PORT_MAP row "Title bar, banner, notifications, dialogs": needs the draw layer and a window; waiting on role 02, #37 (draw layer) and #31/#35 (window)
+- 2026-11-15, role 07, PORT_MAP row "Views and view containers": needs the draw layer and list views; waiting on role 02, #37 (draw layer) and #31/#35 (window)
+- 2026-11-15, role 07, PORT_MAP row "Context view, hover, notification": needs the draw layer and a window; waiting on role 02, #37 (draw layer) and #31/#35 (window)
+- 2026-11-15, role 07, PORT_MAP row "Accessibility, accessibility signals": needs the window and its accesskit adapter; waiting on role 02, #31/#35
+- 2026-11-15, role 07, PORT_MAP row "Drag and drop": needs window mouse and drag events; waiting on role 02, #35
+- 2026-11-15, role 07, PORT_MAP row "Zen mode, centered layout": needs the part layout; waiting on row "Layout and part grid"
+- 2026-11-15, role 07, PORT_MAP row "Welcome, walkthroughs, getting started": needs the editor part; waiting on row "Editor groups, splits, tabs (views and editor service)"
+- 2026-11-15, role 07, PORT_MAP row "Accessibility contrib": needs the accessibility row; waiting on row "Accessibility, accessibility signals"
+- 2026-11-15, role 07, PORT_MAP row "Layout and part grid": needs the grid and split view and the draw layer; waiting on role 07 (Phase 1, #38 split view; grid not yet open) and waiting on role 02, #37 (draw layer) and #31/#35 (window)
+- 2026-11-15, role 07, PORT_MAP row "Editor groups, splits, tabs (views and editor service)": needs the grid, the draw layer and the editor group model; waiting on role 07 (Phase 1, #38), waiting on role 02, #37 (draw layer) and #31/#35 (window), and the editor group model (role 07, Phase 2, not yet open)
+- 2026-11-15, role 07, PORT_MAP row "Status bar (part, service)": needs the draw layer and the status bar model; waiting on role 02, #37 (draw layer) and #31/#35 (window), and #55/#57
+- 2026-11-15, role 07, PORT_MAP row "Quick input": needs list views and the fuzzy scorer; waiting on row "UI widgets: list, tree, table views" and role 08 (fuzzy scorer, not yet open)
+- 2026-11-15, role 07, PORT_MAP row "Quick open and command palette": needs quick input, context keys, the actions and menus registry, the fuzzy scorer and keybinding resolution; waiting on those rows (context keys: role 07 Phase 2, not yet open; "Keybinding resolution and dispatch": role 10, not started)
+- 2026-11-15, role 07, PORT_MAP row "Actions and menus registry": needs context keys; waiting on role 07 (Phase 2, context keys PRs not yet open)
+- 2026-11-15, role 08, PORT_MAP row "Workspace and recent workspaces": needs resource and path helpers; waiting on role 01 (Phase 1), #45/#48/#50/#59–#61
+- 2026-11-15, role 08, PORT_MAP row "Label service": needs resource and path helpers; waiting on role 01 (Phase 1), #45/#48/#50/#59–#61
+- 2026-11-15, role 08, PORT_MAP row "Workspace and workspaces contrib, local history": needs the workspace row and the file service; waiting on row "Workspace and recent workspaces" and role 08 (Phase 1), #27/#39/#54
+- 2026-11-15, role 08/07, PORT_MAP row "File explorer": needs the file service and watcher, the tree views and the file name comparers; waiting on role 08 (Phase 1), #27/#39/#54 and the third Files PR (not yet open), row "UI widgets: list, tree, table views", and #65
+- 2026-11-15, role 02, PORT_MAP row "Menubar (native)": needs the window and event loop; waiting on role 02 (Phase 1), #31/#35
+- 2026-11-15, role 01, PORT_MAP row "Workbench wiring (service registration)": needs the `lathe` binary; waiting on role 01, row "Desktop entry point, argv, window restore" (M1, not started)
+- 2026-11-15, role 01, PORT_MAP row "CLI (`code` launcher, tunnels)": needs argv parsing from the desktop entry point; waiting on role 01, row "Desktop entry point, argv, window restore" (M1, not started)
 
 ## Status (one dated line per agent, newest last)
 
@@ -52,3 +75,4 @@ _None._
 - 2026-11-15, 02–10: reading reference source for their areas; waiting on `vscode-api` approval.
 - 2026-11-15, 01: Phase 0 done; `vscode-api` merged (#3 to #8). Next: rows "Resource and path helpers", "Async primitives (throttler, delayer, cancellation)".
 - 2026-11-15, 02 to 10: Phase 1 unblocked. First tasks are in `docs/HANDOFF.md`; role 10 starts with CI.
+- 2026-11-15, 01 (Phase 2 session): M2 started in a separate worktree. Scenario `tests/e2e/m2-workbench.md` (#22) merged. Claimed for M2: context keys, list/tree models, editor group model, status bar model (#23); strings/glob/fuzzy scorer/filters (#24); color and color registry (#66). Startable and unclaimed: "Opener, URL handler" (role 07; only open-external needs the `lathe` binary). Deferral, not a blocker: status bar hidden entries stay in memory until the storage service (M5). Crate package names use the `lathe-` prefix.
