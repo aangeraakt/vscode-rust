@@ -40,7 +40,7 @@ and, for step 11, `<tmp>/big` with 10,000 files `d<0..99>/f<0..99>.txt`.
 
 1. **Open folder.** `lathe <tmp>/proj`. Within 1 s of launch the window shows the workbench:
    activity bar, side bar with the Explorer view, an empty editor area (one group, no tabs),
-   and the status bar. The window title is `proj - Lathe` on Windows and Linux and `proj` on
+   and the status bar. The window title (the accessibility tree's window node name) is `proj - Lathe` on Windows and Linux and `proj` on
    macOS (`window.title` default, `windowTitle.ts`). The layout probe reports the side bar
    300 px wide, the status bar 22 px tall along the bottom edge, and the editor area filling
    the rest.
@@ -69,11 +69,13 @@ and, for step 11, `<tmp>/big` with 10,000 files `d<0..99>/f<0..99>.txt`.
      activates `readme.md`, the most recently used remaining editor
      (`workbench.editor.focusRecentEditorAfterClose`), leaving tabs `a.txt`, `readme.md`.
    - Typing in `a.txt` sets its dirty flag; `Ctrl+W` on it shows the save prompt from M1;
-     choose "Cancel" and the tab stays.
+     choose "Cancel" and the tab stays. `Ctrl+Z` (macOS `Cmd+Z`) undoes the typing, which
+     returns `a.txt` to its saved version and clears the dirty flag.
 6. **Split groups.** With `a.txt` active, `Ctrl+\` (macOS `Cmd+\`) splits the editor to the
    right: two groups side by side, each 50% of the editor area width (±1 px), both showing
    `a.txt`, focus in the new group. Typing in one group is visible in the other within one
-   frame (same text model). `Ctrl+1` / `Ctrl+2` focus group 1 / 2.
+   frame (same text model); `Ctrl+Z` then undoes it in both, and `a.txt` is not dirty.
+   `Ctrl+1` / `Ctrl+2` focus group 1 / 2.
 7. **Sash.** Drag the sash between the groups 200 px to the left. The layout probe shows the
    groups' widths changed by 200 px and summing to the editor area width; no group goes below
    the minimum editor width of 220 px (`DEFAULT_EDITOR_MIN_DIMENSIONS`). Dragging further left
@@ -86,8 +88,9 @@ and, for step 11, `<tmp>/big` with 10,000 files `d<0..99>/f<0..99>.txt`.
    characters are highlighted (exposed as highlight ranges through the driver). `Enter` opens
    it in the active group as a pinned tab. Reopening quick open and pressing `Escape` closes it
    without opening anything. Typing `nested/deep` lists `deep.rs` with description
-   `src/nested` first (path matching).
-10. **Command palette.** Close all editors (`Ctrl+K W`). `Ctrl+Shift+P` (macOS `Cmd+Shift+P`),
+   `src/nested` (`src
+ested` on Windows) first (path matching).
+10. **Command palette.** Close all editors (`Ctrl+K Ctrl+W`, macOS `Cmd+K Cmd+W`); no editor is dirty, so no prompt appears. `Ctrl+Shift+P` (macOS `Cmd+Shift+P`),
     equivalently `F1`, opens quick open with the `>` prefix. Type `transform to uppercase`: no
     row is listed, because editor actions are listed only for the active text editor and
     only when their precondition (`editorReadonly` false) holds (`commandsQuickAccess.ts`).
