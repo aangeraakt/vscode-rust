@@ -1,0 +1,13 @@
+[package]
+name = "vscode-api"
+description = "Shared contracts for Lathe: ids, events, disposables, services, commands, configuration, files, text models."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
