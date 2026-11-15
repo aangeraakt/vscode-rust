@@ -20,7 +20,7 @@ drop through a COORDINATION.md request.
 | URI | `src/vs/base/common/uri.ts` | vscode-api | 01 | P0 | done (tests) |
 | Resource and path helpers | `src/vs/base/common/{resources,path}.ts` | vscode-api | 01 | M1 | in progress (role 01, PR #12) |
 | Async primitives (throttler, delayer, cancellation) | `src/vs/base/common/async.ts`, `cancellation.ts` | vscode-api | 01 | M1 | not started |
-| Strings, glob, fuzzy scorer, filters | `src/vs/base/common/{strings,glob,fuzzyScorer,filters}.ts` | workspace | 08 | M2 | in progress (role 08, PR #CLAIM) |
+| Strings, glob, fuzzy scorer, filters | `src/vs/base/common/{strings,glob,fuzzyScorer,filters}.ts` | workspace | 08 | M2 | in progress (role 08, PR #24) |
 | JSON with comments parser and edit | `src/vs/base/common/{json,jsonEdit,jsonFormatter}.ts` | settings | 10 | M5 | not started |
 | Keybinding model and key codes | `src/vs/base/common/{keybindings,keyCodes}.ts` | settings | 10 | M1 | in progress (role 10, PR #13) |
 | Diff algorithm | `src/vs/base/common/diff/`, `src/vs/editor/common/diff/` | editor | 04 | M4 | not started |
