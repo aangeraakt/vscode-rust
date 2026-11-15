@@ -22,7 +22,7 @@ drop through a COORDINATION.md request.
 | Async primitives (throttler, delayer, cancellation) | `src/vs/base/common/async.ts`, `cancellation.ts` | vscode-api | 01 | M1 | not started |
 | Strings, glob, fuzzy scorer, filters | `src/vs/base/common/{strings,glob,fuzzyScorer,filters}.ts` | workspace | 08 | M2 | not started |
 | JSON with comments parser and edit | `src/vs/base/common/{json,jsonEdit,jsonFormatter}.ts` | settings | 10 | M5 | not started |
-| Keybinding model and key codes | `src/vs/base/common/{keybindings,keyCodes}.ts` | settings | 10 | M1 | not started |
+| Keybinding model and key codes | `src/vs/base/common/{keybindings,keyCodes}.ts` | settings | 10 | M1 | in progress (role 10, PR #13) |
 | Diff algorithm | `src/vs/base/common/diff/`, `src/vs/editor/common/diff/` | editor | 04 | M4 | not started |
 | Markdown string, codicons, themables | `src/vs/base/common/{htmlContent,codicons,themables}.ts` | workbench | 07 | M3 | not started |
 | UI widgets: list, tree, table | `src/vs/base/browser/ui/{list,tree,table}/` | workbench | 07 | M2 | not started |
