@@ -129,6 +129,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "workbench"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "vscode-api",
+]
+
+[[package]]
 name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
