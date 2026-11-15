@@ -1,0 +1,14 @@
+[package]
+name = "lathe-platform"
+description = "Native platform layer for Lathe: window state model (pure, no display API)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vscode-api.workspace = true
+
+[lints]
+workspace = true
