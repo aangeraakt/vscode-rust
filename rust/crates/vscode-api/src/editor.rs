@@ -347,6 +347,13 @@ pub trait TextModel {
     fn set_value(&mut self, text: &str);
 
     /// Fires after every content change.
+    ///
+    /// Fire-after-apply rule (ADR 0007, as `textModel.ts` `_emitContentChangedEvent`): an
+    /// implementation fires only after the edit is fully applied (text, versions, markers), and
+    /// never while one of its own interior borrows or locks is held. A listener can then read the
+    /// model through a shared handle from inside the callback. A UI-thread owner that fires its
+    /// own [`LocalEmitter`](crate::event::LocalEmitter) after `apply_edits` returns follows the
+    /// same rule: release any `borrow_mut` of the model first, then fire.
     fn on_did_change_content(&self) -> Event<ModelContentChangedEvent>;
 }
 

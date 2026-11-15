@@ -36,7 +36,7 @@ Rules:
 |---|---|---|
 | `ids` | `base/common/uuid.ts`, `platform/instantiation` service ids | typed IDs and handle generators |
 | `lifecycle` | `base/common/lifecycle.ts`, `platform/lifecycle/common/lifecycle.ts` | `Disposable`, `DisposableStore`, lifecycle phases |
-| `event` | `base/common/event.ts` | `Emitter<T>` / `Event<T>` |
+| `event` | `base/common/event.ts` | `Emitter<T>` / `Event<T>` (`Send` listeners); `LocalEmitter<T>` / `LocalEvent<T>` for UI-thread listeners (ADR 0007) |
 | `uri` | `base/common/uri.ts` | `Uri` with VS Code parse/format and `fs_path` semantics |
 | `services` | `platform/instantiation/common/` | type-keyed service registry |
 | `commands` | `platform/commands/common/commands.ts` | command registry with stacking registration |
