@@ -7,5 +7,10 @@
 //! `src/vs/editor/common/viewLayout/`.
 
 pub mod line_heights;
+pub mod lines_layout;
 
 pub use line_heights::{CustomLineHeightData, LineHeightChangeAccessor, LineHeightsManager};
+pub use lines_layout::{
+    EditorWhitespace, LinesLayout, PartialViewLinesViewportData, WhitespaceChangeAccessor,
+    WhitespaceViewportData,
+};
