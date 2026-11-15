@@ -4,12 +4,11 @@
 //! `rbTreeBase.ts`, `pieceTreeTextBufferBuilder.ts`). Lines and columns are 1-based, columns and
 //! offsets count UTF-16 code units, and `\r`, `\n` and `\r\n` each end a line.
 //!
-//! This layer adds the builder and the read-only piece tree. Edits and the `PieceTreeTextBuffer`
-//! follow in later PRs of the stack.
-
-// Edits (`insert`, `delete` and their helpers) have no caller yet. The next PR of this stack
-// adds them and removes this allow.
-#![allow(dead_code)]
+//! Storage: an arena red-black tree (`rbtree`) of pieces over UTF-8 buffers (`piece`). The
+//! public API is safe Rust with no `unsafe`.
+//!
+//! Not in this crate yet: the search methods, snapshots, and the `TextModel` implementation
+//! (versioning, undo, decorations). Those belong to the "Text model" and "Decorations" rows.
 
 mod builder;
 mod piece;
