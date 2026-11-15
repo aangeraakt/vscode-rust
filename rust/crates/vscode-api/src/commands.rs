@@ -82,6 +82,7 @@ impl CommandRegistry {
         handler: impl Fn(&ServiceRegistry, &[Value]) -> CommandResult + Send + Sync + 'static,
     ) -> Disposable {
         let id = id.into();
+        assert!(!id.as_str().is_empty(), "invalid command: empty id");
         let token = {
             let mut inner = self.lock();
             let token = inner.next_token;
@@ -98,13 +99,22 @@ impl CommandRegistry {
         let weak = Arc::downgrade(&self.inner);
         Disposable::new(move || {
             let Some(inner) = weak.upgrade() else { return };
-            let mut inner = inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(list) = inner.commands.get_mut(&id) {
-                list.retain(|(t, _)| *t != token);
+            let removed = {
+                let mut inner = inner.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(list) = inner.commands.get_mut(&id) else {
+                    return;
+                };
+                let removed = list
+                    .iter()
+                    .position(|(t, _)| *t == token)
+                    .map(|i| list.remove(i));
                 if list.is_empty() {
                     inner.commands.remove(&id);
                 }
-            }
+                removed
+            };
+            // The handler's captures may touch the registry when dropped; drop them unlocked.
+            drop(removed);
         })
     }
 
@@ -179,30 +189,48 @@ mod tests {
     }
 
     #[test]
-    fn stacked_registrations_shadow_and_restore() {
-        // commands.test.ts: "Stacked command registration"
+    fn register_register_dispose() {
+        // commands.test.ts: "register/register/dispose"
         let registry = CommandRegistry::new();
         let services = ServiceRegistry::new();
-        let first = registry.register("test", constant(json!("first")));
-        let mut second = registry.register("test", constant(json!("second")));
-        assert_eq!(
-            registry.execute(&services, "test", &[]),
-            Ok(json!("second"))
-        );
-        second.dispose();
-        assert_eq!(registry.execute(&services, "test", &[]), Ok(json!("first")));
-        drop(first);
-        assert!(registry.get("test").is_none());
+        let run = || registry.execute(&services, "foo", &[]);
+
+        // dispose overriding command
+        let mut reg1 = registry.register("foo", constant(json!(1)));
+        assert_eq!(run(), Ok(json!(1)));
+        let mut reg2 = registry.register("foo", constant(json!(2)));
+        assert_eq!(run(), Ok(json!(2)));
+        reg2.dispose();
+        assert_eq!(run(), Ok(json!(1)));
+        reg1.dispose();
+        assert!(registry.get("foo").is_none());
+
+        // dispose override command first
+        let mut reg1 = registry.register("foo", constant(json!(1)));
+        let mut reg2 = registry.register("foo", constant(json!(2)));
+        assert_eq!(run(), Ok(json!(2)));
+        reg1.dispose();
+        assert_eq!(run(), Ok(json!(2)));
+        reg2.dispose();
+        assert!(registry.get("foo").is_none());
     }
 
     #[test]
-    fn disposing_older_registration_keeps_newer() {
+    fn dropping_a_handler_that_uses_the_registry_does_not_deadlock() {
+        struct TouchOnDrop(CommandRegistry);
+        impl Drop for TouchOnDrop {
+            fn drop(&mut self) {
+                let _ = self.0.has("other");
+            }
+        }
         let registry = CommandRegistry::new();
-        let services = ServiceRegistry::new();
-        let mut first = registry.register("test", constant(json!(1)));
-        let _second = registry.register("test", constant(json!(2)));
-        first.dispose();
-        assert_eq!(registry.execute(&services, "test", &[]), Ok(json!(2)));
+        let guard = TouchOnDrop(registry.clone());
+        let mut reg = registry.register("foo", move |_, _| {
+            let _ = &guard;
+            Ok(Value::Null)
+        });
+        reg.dispose();
+        assert!(!registry.has("foo"));
     }
 
     #[test]

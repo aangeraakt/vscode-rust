@@ -41,7 +41,8 @@ drop through a COORDINATION.md request.
 |---|---|---|---|---|---|
 | Instantiation / service registry | `src/vs/platform/instantiation/` | vscode-api | 01 | P0 | done (tests; explicit registration, no constructor injection, ADR 0005) |
 | Commands | `src/vs/platform/commands/` | vscode-api | 01 | P0 | done (tests) |
-| Configuration model and registry | `src/vs/platform/configuration/` | vscode-api (model), settings (registry, files) | 01 / 10 | P0 / M5 | not started |
+| Configuration model | `src/vs/platform/configuration/common/{configurationModels,configuration}.ts` (model, value trees, overrides) | vscode-api | 01 | P0 | done (tests; array-merge quirk differs, documented) |
+| Configuration registry and service (schemas, scopes, defaults, inspect, change events) | `src/vs/platform/configuration/`, `src/vs/workbench/services/configuration/` | settings | 10 | M5 | not started |
 | Files: provider contract | `src/vs/platform/files/common/files.ts` | vscode-api | 01 | P0 | not started |
 | Files: disk provider, file service, watcher | `src/vs/platform/files/{common/fileService.ts,node/}` | workspace | 08 | M1 | not started |
 | Context keys and `when` clauses | `src/vs/platform/contextkey/` | workbench | 07 | M2 | not started |
