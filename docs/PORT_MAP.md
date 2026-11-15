@@ -44,7 +44,7 @@ drop through a COORDINATION.md request.
 | Configuration model | `src/vs/platform/configuration/common/{configurationModels,configuration}.ts` (model, value trees, overrides) | vscode-api | 01 | P0 | done (tests; array-merge quirk differs, documented) |
 | Configuration registry and service (schemas, scopes, defaults, inspect, change events) | `src/vs/platform/configuration/`, `src/vs/workbench/services/configuration/` | settings | 10 | M5 | not started |
 | Files: provider contract | `src/vs/platform/files/common/files.ts` | vscode-api | 01 | P0 | done (tests; descriptor and stream APIs deferred until a provider needs them) |
-| Files: disk provider, file service, watcher | `src/vs/platform/files/{common/fileService.ts,node/}` | workspace | 08 | M1 | not started |
+| Files: disk provider, file service, watcher | `src/vs/platform/files/{common/fileService.ts,node/}` | workspace | 08 | M1 | in progress (role 08, PR #16) |
 | Context keys and `when` clauses | `src/vs/platform/contextkey/` | workbench | 07 | M2 | not started |
 | Keybinding resolution and dispatch | `src/vs/platform/keybinding/`, `keyboardLayout/` | settings | 10 | M1 | not started |
 | Actions and menus registry | `src/vs/platform/actions/`, `action/` | workbench | 07 | M2 | not started |
