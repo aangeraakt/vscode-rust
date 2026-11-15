@@ -1,0 +1,15 @@
+[package]
+name = "lathe-editor"
+description = "Editor core for Lathe: editor options, option validation, computed font metrics and configuration change events."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vscode-api.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
