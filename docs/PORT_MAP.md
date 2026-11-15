@@ -26,7 +26,7 @@ drop through a COORDINATION.md request.
 | Diff algorithm | `src/vs/base/common/diff/`, `src/vs/editor/common/diff/` | editor | 04 | M4 | not started |
 | Markdown string, codicons, themables | `src/vs/base/common/{htmlContent,codicons,themables}.ts` | workbench | 07 | M3 | not started |
 | UI widgets: list, tree, table | `src/vs/base/browser/ui/{list,tree,table}/` | workbench | 07 | M2 | not started |
-| UI widgets: split view, grid, sash | `src/vs/base/browser/ui/{splitview,grid,sash,centered}/` | workbench | 07 | M2 | not started |
+| UI widgets: split view, grid, sash | `src/vs/base/browser/ui/{splitview,grid,sash,centered}/` | workbench | 07 | M2 | in progress (role 07, PR #20) |
 | UI widgets: scrollbar | `src/vs/base/browser/ui/scrollbar/` | editor-view | 05 | M1 | not started |
 | UI widgets: inputs, buttons, toggles, menus, hover, dialog | `src/vs/base/browser/ui/{inputbox,findinput,button,toggle,menu,dropdown,hover,dialog,selectBox,actionbar,toolbar,iconLabel,highlightedlabel,keybindingLabel,progressbar,countBadge,breadcrumbs}/` | workbench | 07 | M2 | not started |
 | Keyboard and mouse events | `src/vs/base/browser/{keyboardEvent,mouseEvent,touch,dnd}.ts` | platform | 02 | M1 | not started |
