@@ -8,3 +8,5 @@
 //! under the MIT License. Its license text is in the repository's `LICENSE.txt`.
 
 pub mod key_codes;
+pub mod keybindings;
+pub mod platform;
