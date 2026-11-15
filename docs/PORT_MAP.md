@@ -25,7 +25,7 @@ drop through a COORDINATION.md request.
 | Keybinding model and key codes | `src/vs/base/common/{keybindings,keyCodes}.ts` | settings | 10 | M1 | in progress (role 10, PR #13) |
 | Diff algorithm | `src/vs/base/common/diff/`, `src/vs/editor/common/diff/` | editor | 04 | M4 | not started |
 | Markdown string, codicons, themables | `src/vs/base/common/{htmlContent,codicons,themables}.ts` | workbench | 07 | M3 | not started |
-| UI widgets: list and tree models (range map, index/object/compressed tree models) | `src/vs/base/browser/ui/list/rangeMap.ts`, `src/vs/base/browser/ui/tree/{indexTreeModel,objectTreeModel,compressedObjectTreeModel,tree}.ts` | workbench | 07 | M2 | in progress (role 07, PR #CLAIM) |
+| UI widgets: list and tree models (range map, index/object/compressed tree models) | `src/vs/base/browser/ui/list/rangeMap.ts`, `src/vs/base/browser/ui/tree/{indexTreeModel,objectTreeModel,compressedObjectTreeModel,tree}.ts` | workbench | 07 | M2 | in progress (role 07, PR #23) |
 | UI widgets: list, tree, table views | `src/vs/base/browser/ui/{list,tree,table}/` (rest) | workbench | 07 | M2 | not started |
 | UI widgets: split view, grid, sash | `src/vs/base/browser/ui/{splitview,grid,sash,centered}/` | workbench | 07 | M2 | in progress (role 07, PR #20) |
 | UI widgets: scrollbar | `src/vs/base/browser/ui/scrollbar/` | editor-view | 05 | M1 | not started |
@@ -46,7 +46,7 @@ drop through a COORDINATION.md request.
 | Configuration registry and service (schemas, scopes, defaults, inspect, change events) | `src/vs/platform/configuration/`, `src/vs/workbench/services/configuration/` | settings | 10 | M5 | not started |
 | Files: provider contract | `src/vs/platform/files/common/files.ts` | vscode-api | 01 | P0 | done (tests; descriptor and stream APIs deferred until a provider needs them) |
 | Files: disk provider, file service, watcher | `src/vs/platform/files/{common/fileService.ts,node/}` | workspace | 08 | M1 | in progress (role 08, PR #16) |
-| Context keys and `when` clauses | `src/vs/platform/contextkey/` | workbench | 07 | M2 | in progress (role 07, PR #CLAIM) |
+| Context keys and `when` clauses | `src/vs/platform/contextkey/` | workbench | 07 | M2 | in progress (role 07, PR #23) |
 | Keybinding resolution and dispatch | `src/vs/platform/keybinding/`, `keyboardLayout/` | settings | 10 | M1 | not started |
 | Actions and menus registry | `src/vs/platform/actions/`, `action/` | workbench | 07 | M2 | not started |
 | Lifecycle phases | `src/vs/workbench/services/lifecycle/common/lifecycle.ts` (enums) | vscode-api | 01 | P0 | done (tests) |
@@ -132,9 +132,9 @@ drop through a COORDINATION.md request.
 |---|---|---|---|---|---|
 | Layout and part grid | `src/vs/workbench/browser/{layout,workbench,part}.ts`, `browser/parts/partGrid/` | workbench | 07 | M2 | not started |
 | Activity bar, sidebar, panel, auxiliary bar | `src/vs/workbench/browser/parts/{activitybar,sidebar,panel,auxiliarybar}/`, `paneComposite*.ts`, `compositeBar*.ts` | workbench | 07 | M2 | not started |
-| Editor group model (open, close, move, MRU, preview, sticky) | `src/vs/workbench/common/editor/editorGroupModel.ts` | workbench | 07 | M2 | in progress (role 07, PR #CLAIM) |
+| Editor group model (open, close, move, MRU, preview, sticky) | `src/vs/workbench/common/editor/editorGroupModel.ts` | workbench | 07 | M2 | in progress (role 07, PR #23) |
 | Editor groups, splits, tabs (views and editor service) | `src/vs/workbench/browser/parts/editor/`, `src/vs/workbench/services/editor/` | workbench | 07 | M2 | not started |
-| Status bar model (entry order, alignment, priority, hidden entries) | `src/vs/workbench/browser/parts/statusbar/statusbarModel.ts` | workbench | 07 | M2 | in progress (role 07, PR #CLAIM) |
+| Status bar model (entry order, alignment, priority, hidden entries) | `src/vs/workbench/browser/parts/statusbar/statusbarModel.ts` | workbench | 07 | M2 | in progress (role 07, PR #23) |
 | Status bar (part, service) | `src/vs/workbench/browser/parts/statusbar/` (rest), `services/statusbar/` | workbench | 07 | M2 | not started |
 | Title bar, banner, notifications, dialogs | `src/vs/workbench/browser/parts/{titlebar,banner,notifications,dialogs}/` | workbench | 07 | M2 | not started |
 | Views and view containers | `src/vs/workbench/browser/parts/views/`, `services/views/` | workbench | 07 | M2 | not started |
