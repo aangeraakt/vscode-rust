@@ -9,6 +9,7 @@
 
 pub mod commands;
 pub mod configuration;
+pub mod editor;
 pub mod event;
 pub mod files;
 pub mod ids;
@@ -18,6 +19,7 @@ pub mod uri;
 
 pub use commands::{CommandError, CommandHandler, CommandRegistry, CommandResult};
 pub use configuration::{ConfigurationModel, ConfigurationOverride, ConfigurationTarget};
+pub use editor::{Position, Range, Selection, SingleEditOperation, TextModel};
 pub use event::{Emitter, Event};
 pub use files::{FileSystemError, FileSystemErrorCode, FileSystemProvider};
 pub use ids::{CommandId, IdGenerator, LanguageId};
