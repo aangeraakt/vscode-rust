@@ -6,6 +6,7 @@
 
 use super::*;
 use std::cell::{Cell, RefCell};
+use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use vscode_api::Disposable;
@@ -78,10 +79,17 @@ fn filtered<T: 'static>(
     IndexTreeModel::new("test", root, options)
 }
 
-/// Runs `f` with plain splice options (`withSmartSplice`; the smart-splice run is not ported
-/// yet).
+fn id_of(n: &i32) -> String {
+    n.to_string()
+}
+
+/// Runs `f` with plain splice options and with `diff_identity_provider` (`withSmartSplice`).
 fn with_smart_splice(f: impl Fn(&dyn Fn() -> SpliceOptions<'static, i32, ()>)) {
     f(&SpliceOptions::default);
+    f(&|| SpliceOptions {
+        diff_identity_provider: Some(&id_of),
+        ..Default::default()
+    });
 }
 
 fn three_with_children() -> Vec<TreeElement<i32>> {
@@ -204,6 +212,54 @@ fn deep_delete() {
     });
 }
 
+/// `toElements`: the element, followed by its children in braces.
+fn shape<T: Display, F>(model: &IndexTreeModel<T, F>, id: NodeId) -> String {
+    let node = model.node(id).unwrap();
+    if node.children().is_empty() {
+        return node.element().to_string();
+    }
+    let children: Vec<String> = node.children().iter().map(|&c| shape(model, c)).collect();
+    format!("{}{{{}}}", node.element(), children.join(", "))
+}
+
+#[test]
+fn smart_splice_deep() {
+    let identity = |s: &&str| s.to_string();
+    let smart = || SpliceOptions {
+        diff_identity_provider: Some(&identity),
+        ..Default::default()
+    };
+    let mut model = model("root");
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, [e("0"), e("1"), e("2"), e("3")], smart())
+        .unwrap();
+    let top = |model: &IndexTreeModel<&str>| -> Vec<String> {
+        list.ids()
+            .into_iter()
+            .filter(|&id| model.node(id).unwrap().depth() == 1)
+            .map(|id| shape(model, id))
+            .collect()
+    };
+    assert_eq!(top(&model), ["0", "1", "2", "3"]);
+
+    let to_insert = vec![
+        e("-0.5"),
+        p("0", vec![e("0.1")]),
+        e("1"),
+        p("2", vec![e("2.1"), p("2.2", vec![e("2.21")])]),
+    ];
+    let options = SpliceOptions {
+        diff_depth: usize::MAX,
+        ..smart()
+    };
+    model.splice(&[0], 3, to_insert, options).unwrap();
+    assert_eq!(
+        top(&model),
+        ["-0.5", "0{0.1}", "1", "2{2.1, 2.2{2.21}}", "3"]
+    );
+}
+
 #[test]
 fn hidden_delete() {
     with_smart_splice(|options| {
@@ -259,6 +315,68 @@ fn expand() {
             ]
         );
     });
+}
+
+/// xorshift64*: deterministic stand-in for `Math.random()`.
+struct Random(u64);
+
+impl Random {
+    fn next(&mut self) -> f64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        (self.0.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+#[test]
+fn smart_diff_consistency() {
+    let mut random = Random(0x9e37_79b9_7f4a_7c15);
+    for _ in 0..500 {
+        let mut model = model(-1);
+        let list = bind(&model);
+        let mut expected: Vec<i32> = Vec::new();
+        let mut counter = 0;
+        let mut steps = Vec::new();
+        let mut edits = random.next() * 9.0 + 1.0;
+        while edits > 0.0 {
+            edits -= 1.0;
+            let len = list.len();
+            let splice_index = (random.next() * len as f64).floor() as usize;
+            let delete_count = (random.next() * (len - splice_index) as f64).ceil() as usize;
+            let insert_count = (random.next() * 5.0 + 1.0).floor() as usize;
+            let mut inserts: Vec<i32> = (0..insert_count)
+                .map(|_| {
+                    counter += 1;
+                    counter - 1
+                })
+                .collect();
+            if random.next() < 0.5 {
+                // Move existing items.
+                let current = list.elements(&model);
+                inserts.extend_from_slice(&current[splice_index..splice_index + delete_count / 2]);
+            }
+            let options = SpliceOptions {
+                diff_identity_provider: Some(&id_of),
+                ..Default::default()
+            };
+            model
+                .splice(
+                    &[splice_index],
+                    delete_count,
+                    inserts.iter().map(|&i| e(i)),
+                    options,
+                )
+                .unwrap();
+            let end = (splice_index + delete_count).min(expected.len());
+            expected.splice(splice_index..end, inserts.iter().copied());
+            let actual = list.elements(&model);
+            steps.push(format!(
+                "splice({splice_index}, {delete_count}, {inserts:?}) -> {actual:?}"
+            ));
+            assert_eq!(expected, actual, "steps:\n{}", steps.join("\n"));
+        }
+    }
 }
 
 #[test]
@@ -700,6 +818,29 @@ fn filter_data_is_stored_on_nodes() {
         .splice(&[0], 0, [e(4)], SpliceOptions::default())
         .unwrap();
     assert_eq!(model.get_node(&[0]).unwrap().filter_data(), Some(&40));
+}
+
+#[test]
+fn smart_splice_keeps_unchanged_nodes() {
+    let smart = || SpliceOptions {
+        diff_identity_provider: Some(&id_of),
+        ..Default::default()
+    };
+    let mut model = model(-1);
+    let list = bind(&model);
+    model
+        .splice(&[0], 0, three_with_children(), smart())
+        .unwrap();
+    model.set_collapsed(&[0], Some(true), false).unwrap();
+    let kept = model.get_node_id(&[0]).unwrap();
+    model
+        .splice(&[0], usize::MAX, [p(0, vec![e(10)]), e(5), e(2)], smart())
+        .unwrap();
+    assert_eq!(model.get_node_id(&[0]).unwrap(), kept);
+    assert_eq!(
+        list.rows(&model),
+        [(0, true, 1), (5, false, 1), (2, false, 1)]
+    );
 }
 
 #[test]

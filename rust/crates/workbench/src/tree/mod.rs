@@ -9,6 +9,7 @@
 //! methods with its own location type instead).
 
 pub mod index_tree_model;
+mod lcs;
 
 use std::fmt;
 
