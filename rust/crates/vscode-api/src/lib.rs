@@ -10,6 +10,7 @@
 pub mod commands;
 pub mod configuration;
 pub mod event;
+pub mod files;
 pub mod ids;
 pub mod lifecycle;
 pub mod services;
@@ -18,6 +19,7 @@ pub mod uri;
 pub use commands::{CommandError, CommandHandler, CommandRegistry, CommandResult};
 pub use configuration::{ConfigurationModel, ConfigurationOverride, ConfigurationTarget};
 pub use event::{Emitter, Event};
+pub use files::{FileSystemError, FileSystemErrorCode, FileSystemProvider};
 pub use ids::{CommandId, IdGenerator, LanguageId};
 pub use lifecycle::{Disposable, DisposableStore, LifecyclePhase, ShutdownReason};
 pub use services::ServiceRegistry;
