@@ -15,6 +15,7 @@
 //! Scope so far: the option framework and the options M1 needs. The remaining options of
 //! `editorOptions.ts` are added to [`EditorOption`] as they are ported.
 
+pub mod config;
 pub mod environment;
 pub mod font;
 pub mod model;
@@ -22,6 +23,7 @@ pub mod option;
 pub mod options;
 pub mod value;
 
+pub use config::{EditorConfiguration, apply_update};
 pub use environment::{Environment, Platform};
 pub use font::{FontMetrics, bare_font_metrics, default_font_size, golden_line_height_ratio};
 pub use model::ModelOptions;
