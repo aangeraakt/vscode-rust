@@ -102,7 +102,7 @@ drop through a COORDINATION.md request.
 | Cursor and selections, multi-cursor | `src/vs/editor/common/cursor/`, `cursorCommon.ts`, `src/vs/editor/contrib/multicursor/` | editor | 04 | M1 | not started |
 | Editing commands | `src/vs/editor/common/commands/`, `src/vs/editor/browser/coreCommands.ts`, `contrib/{linesOperations,wordOperations,wordPartOperations,caretOperations,comment,indentation,clipboard,cursorUndo,inPlaceReplace,insertFinalNewLine,lineSelection}/` | editor | 04 | M1 | not started |
 | View model, line projection, word wrap | `src/vs/editor/common/viewModel/`, `viewModel.ts`, `modelLineProjectionData.ts`, `coordinatesConverter.ts` | editor | 04 | M1 | not started |
-| Editor options | `src/vs/editor/common/config/` | editor | 04 | M1 | not started |
+| Editor options | `src/vs/editor/common/config/` | editor | 04 | M1 | in progress (role 04, PR #17) |
 | Find / replace | `src/vs/editor/contrib/find/` | editor | 04 | M1 | not started |
 | Folding | `src/vs/editor/contrib/folding/` | editor | 04 | M1 | not started |
 | Bracket matching | `src/vs/editor/contrib/bracketMatching/` | editor | 04 | M1 | not started |
