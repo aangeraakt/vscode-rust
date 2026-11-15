@@ -4,4 +4,5 @@
 //! root). Each module cites the TypeScript source it was ported from; the TypeScript tree at the
 //! pinned reference commit is the behavioral reference.
 
+pub mod comparers;
 pub mod strings;
