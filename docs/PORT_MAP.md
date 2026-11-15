@@ -65,7 +65,7 @@ drop through a COORDINATION.md request.
 | Workspace and recent workspaces | `src/vs/platform/{workspace,workspaces,history}/` | workspace | 08 | M2 | not started |
 | Environment, product, paths | `src/vs/platform/{environment,product,path}/` | lathe | 01 | M1 | not started |
 | Label service | `src/vs/platform/label/`, `uriIdentity/` | workspace | 08 | M2 | not started |
-| Terminal platform (PTY host) | `src/vs/platform/terminal/`, `shell/` | terminal | 09 | M4 | not started |
+| Terminal platform (PTY host) | `src/vs/platform/terminal/`, `shell/` | terminal | 09 | M4 | in progress (role 09, PR #21) |
 | External terminal | `src/vs/platform/externalTerminal/` | terminal | 09 | M4 | not started |
 | Debug platform helpers | `src/vs/platform/debug/` | debug | 09 | M6 | not started |
 | Extension management and gallery | `src/vs/platform/{extensionManagement,extensions,extensionResourceLoader,extensionRecommendations}/` | extensions | 10 | M5 | not started |
