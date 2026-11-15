@@ -6,7 +6,9 @@
 //! cites the TypeScript source it was ported from; the TypeScript tree at the pinned reference
 //! commit is the behavioral reference.
 
+mod coalesce;
 pub mod disk;
 mod locks;
+mod watch;
 
 pub use disk::DiskFileSystemProvider;

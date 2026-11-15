@@ -15,11 +15,13 @@
 //! - Atomic writes check the target (existence, `create`, `overwrite`, folder) before the
 //!   temporary file is written. Upstream skips these checks for atomic writes, so it would
 //!   replace an existing file even when `overwrite` is false.
-//! - Watching is not implemented yet; `watch` returns a no-op disposable.
+//! - Watch failures are dropped, and `watch` returns a no-op disposable for them, because the
+//!   contract has no error channel yet (`on_did_watch_error` is a COORDINATION request).
 
 use std::fs::{self, File, Metadata, OpenOptions, Permissions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use vscode_api::event::{Emitter, Event};
@@ -32,11 +34,13 @@ use vscode_api::lifecycle::Disposable;
 use vscode_api::uri::Uri;
 
 use crate::locks::ResourceLocks;
+use crate::watch;
 
-/// The `file` scheme provider. Holds the change emitter and the per-resource locks.
+/// The `file` scheme provider. Holds the change emitter, which active watches fire on, and the
+/// per-resource locks.
 #[derive(Default)]
 pub struct DiskFileSystemProvider {
-    changes: Emitter<Vec<FileChange>>,
+    changes: Arc<Emitter<Vec<FileChange>>>,
     locks: ResourceLocks,
 }
 
@@ -67,8 +71,12 @@ impl FileSystemProvider for DiskFileSystemProvider {
         self.changes.event()
     }
 
-    fn watch(&self, _resource: &Uri, _options: WatchOptions) -> Disposable {
-        Disposable::none()
+    fn watch(&self, resource: &Uri, options: WatchOptions) -> Disposable {
+        match to_path(resource) {
+            Ok(path) => watch::start(path, options, self.changes.clone())
+                .unwrap_or_else(|_| Disposable::none()),
+            Err(_) => Disposable::none(),
+        }
     }
 
     fn stat<'a>(&'a self, resource: &'a Uri) -> BoxFuture<'a, FileResult<Stat>> {
