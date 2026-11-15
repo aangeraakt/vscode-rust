@@ -4,18 +4,29 @@
 //!
 //! Ported from `src/vs/editor/common/config/`:
 //! - `editorOptions.ts`: the option validators (`boolean`, `clampedInt`, `clampedFloat`,
-//!   `stringSet`) in [`value`].
+//!   `stringSet`) in [`value`], the option ids in [`option`], the validated and computed option
+//!   sets in [`options`], and `ConfigurationChangedEvent` in [`option`].
 //! - `fontInfo.ts`: the line height and zoom rules of `BareFontInfo._create`, the
 //!   `GOLDEN_LINE_HEIGHT_RATIO` and `MINIMUM_LINE_HEIGHT` constants, in [`font`].
 //!
 //! Model indentation defaults come from `src/vs/editor/common/core/misc/textModelDefaults.ts`
 //! (see [`model`]).
+//!
+//! Scope so far: the option framework and the options M1 needs. The remaining options of
+//! `editorOptions.ts` are added to [`EditorOption`] as they are ported.
 
 pub mod environment;
 pub mod font;
 pub mod model;
+pub mod option;
+pub mod options;
 pub mod value;
 
 pub use environment::{Environment, Platform};
 pub use font::{FontMetrics, bare_font_metrics, default_font_size, golden_line_height_ratio};
 pub use model::ModelOptions;
+pub use option::{ConfigurationChangedEvent, EditorOption};
+pub use options::{
+    AutoClosingBrackets, ComputedEditorOptions, CursorBlinkingStyle, CursorStyle, LineNumbers,
+    ModifierKey, MultiCursorModifier, RenderWhitespace, ValidatedEditorOptions, WordWrap,
+};
