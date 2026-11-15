@@ -14,8 +14,10 @@
 //! in the TypeScript source.
 
 pub mod encoded_token_attributes;
+pub mod language_configuration;
 pub mod language_id_codec;
 pub mod line_tokens;
+pub mod supports;
 pub mod tokenization_registry;
 
 pub use encoded_token_attributes::{ColorId, FontStyle, StandardTokenType, TokenMetadata};
