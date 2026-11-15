@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+fancy-regex = "0.20"
 vscode-api.workspace = true
 
 [lints]
