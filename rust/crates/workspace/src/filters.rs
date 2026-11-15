@@ -499,3 +499,506 @@ fn canonicalize(c: u16) -> u16 {
         _ => c,
     }
 }
+
+/// `matchesFuzzy2`: [`fuzzy_score`] with a weak first match allowed, as highlight ranges.
+pub fn matches_fuzzy2(pattern: &str, word: &str) -> Option<Vec<Match>> {
+    let options = FuzzyScoreOptions {
+        first_match_can_be_weak: true,
+        boost_full_match: true,
+    };
+    let score = fuzzy_score_str(pattern, 0, word, 0, options)?;
+    Some(create_matches(Some(&score)))
+}
+
+// --- fuzzyScore ---
+
+/// `FuzzyScore`: the score of a fuzzy match and where it matched.
+///
+/// Upstream packs this into an array `[score, wordStart, ...matches]`; `matches` keeps upstream's
+/// order (last matched position first), relative to `word_start`, in UTF-16 code units.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FuzzyScore {
+    /// The score; higher is better.
+    pub score: i32,
+    /// The UTF-16 offset in the word at which matching started.
+    pub word_start: usize,
+    /// The matched positions relative to `word_start`, last first.
+    pub matches: Vec<usize>,
+}
+
+impl FuzzyScore {
+    /// `FuzzyScore.Default`: no matches and score -100.
+    pub fn default_score() -> Self {
+        Self {
+            score: -100,
+            word_start: 0,
+            matches: Vec::new(),
+        }
+    }
+
+    /// `FuzzyScore.isDefault`.
+    pub fn is_default(score: Option<&FuzzyScore>) -> bool {
+        score.is_none_or(|s| s.matches.is_empty() && s.score == -100 && s.word_start == 0)
+    }
+}
+
+/// `FuzzyScoreOptions`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FuzzyScoreOptions {
+    /// Accept a match whose first character does not hit a word start or upper-case letter.
+    pub first_match_can_be_weak: bool,
+    /// Add 2 to the score when the pattern matches every character of the word.
+    pub boost_full_match: bool,
+}
+
+impl Default for FuzzyScoreOptions {
+    /// `FuzzyScoreOptions.default`.
+    fn default() -> Self {
+        Self {
+            first_match_can_be_weak: false,
+            boost_full_match: true,
+        }
+    }
+}
+
+/// `FuzzyScorer`: the signature shared by [`fuzzy_score`] and its graceful variants. Text is
+/// UTF-16; `pattern_low` and `word_low` are the lower-cased pattern and word.
+pub type FuzzyScorer = fn(
+    pattern: &[u16],
+    pattern_low: &[u16],
+    pattern_pos: usize,
+    word: &[u16],
+    word_low: &[u16],
+    word_pos: usize,
+    options: FuzzyScoreOptions,
+) -> Option<FuzzyScore>;
+
+/// [`fuzzy_score`] on `&str`, lower-casing pattern and word; positions are UTF-16 offsets.
+pub fn fuzzy_score_str(
+    pattern: &str,
+    pattern_pos: usize,
+    word: &str,
+    word_pos: usize,
+    options: FuzzyScoreOptions,
+) -> Option<FuzzyScore> {
+    let (pattern, word) = (to_utf16(pattern), to_utf16(word));
+    let (pattern_low, word_low) = (to_lower_utf16(&pattern), to_lower_utf16(&word));
+    fuzzy_score(
+        &pattern,
+        &pattern_low,
+        pattern_pos,
+        &word,
+        &word_low,
+        word_pos,
+        options,
+    )
+}
+
+/// `createMatches`: the highlight ranges of a score.
+pub fn create_matches(score: Option<&FuzzyScore>) -> Vec<Match> {
+    let Some(score) = score else {
+        return Vec::new();
+    };
+    let mut res: Vec<Match> = Vec::new();
+    for &m in score.matches.iter().rev() {
+        let pos = m + score.word_start;
+        match res.last_mut() {
+            Some(last) if last.end == pos => last.end = pos + 1,
+            _ => res.push(Match::new(pos, pos + 1)),
+        }
+    }
+    res
+}
+
+const MAX_LEN: usize = 128;
+const MIN_SCORE: i32 = i32::MIN;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Arrow {
+    Diag = 1,
+    Left = 2,
+    LeftLeft = 3,
+}
+
+/// Upstream's module-level tables. They are reused without clearing between calls, as upstream
+/// does, so they live in a thread local.
+struct Tables {
+    min_word_match_pos: [usize; 2 * MAX_LEN + 1],
+    max_word_match_pos: [usize; 2 * MAX_LEN + 1],
+    diag: [[i32; MAX_LEN + 1]; MAX_LEN + 1],
+    table: [[i32; MAX_LEN + 1]; MAX_LEN + 1],
+    arrows: [[u8; MAX_LEN + 1]; MAX_LEN + 1],
+}
+
+thread_local! {
+    static TABLES: std::cell::RefCell<Box<Tables>> = std::cell::RefCell::new(Box::new(Tables {
+        min_word_match_pos: [0; 2 * MAX_LEN + 1],
+        max_word_match_pos: [0; 2 * MAX_LEN + 1],
+        diag: [[0; MAX_LEN + 1]; MAX_LEN + 1],
+        table: [[0; MAX_LEN + 1]; MAX_LEN + 1],
+        arrows: [[0; MAX_LEN + 1]; MAX_LEN + 1],
+    }));
+}
+
+/// `s[i]` in JavaScript: `None` (undefined) when out of range, including negative.
+fn at(s: &[u16], i: isize) -> Option<u16> {
+    usize::try_from(i).ok().and_then(|i| s.get(i).copied())
+}
+
+fn is_separator_at_pos(value: &[u16], index: isize) -> bool {
+    let Ok(index) = usize::try_from(index) else {
+        return false;
+    };
+    let Some(code) = strings::code_point_at(value, index) else {
+        return false;
+    };
+    matches!(
+        char::from_u32(code),
+        Some('_' | '-' | '.' | ' ' | '/' | '\\' | '\'' | '"' | ':' | '$' | '<' | '>')
+            | Some('(' | ')' | '[' | ']' | '{' | '}')
+    ) || strings::is_emoji_imprecise(code)
+}
+
+fn is_whitespace_at_pos(value: &[u16], index: isize) -> bool {
+    matches!(at(value, index), Some(0x20 | 0x09))
+}
+
+fn is_upper_case_at_pos(pos: isize, word: &[u16], word_low: &[u16]) -> bool {
+    at(word, pos) != at(word_low, pos)
+}
+
+/// `isPatternInWord`: the pattern's characters occur in order in the word. With `fill`, records
+/// the minimum word position of each pattern position.
+fn is_pattern_in_word(
+    t: &mut Tables,
+    pattern_low: &[u16],
+    mut pattern_pos: usize,
+    pattern_len: usize,
+    word_low: &[u16],
+    mut word_pos: usize,
+    word_len: usize,
+) -> bool {
+    while pattern_pos < pattern_len && word_pos < word_len {
+        if pattern_low.get(pattern_pos) == word_low.get(word_pos) {
+            t.min_word_match_pos[pattern_pos] = word_pos;
+            pattern_pos += 1;
+        }
+        word_pos += 1;
+    }
+    pattern_pos == pattern_len
+}
+
+/// `fuzzyScore`: matches a pattern against a word the way IntelliSense does, preferring word
+/// starts, upper-case letters and contiguous runs. Text is UTF-16; at most 128 code units of
+/// pattern and word are considered.
+pub fn fuzzy_score(
+    pattern: &[u16],
+    pattern_low: &[u16],
+    pattern_start: usize,
+    word: &[u16],
+    word_low: &[u16],
+    word_start: usize,
+    options: FuzzyScoreOptions,
+) -> Option<FuzzyScore> {
+    TABLES.with(|t| {
+        let t = &mut **t.borrow_mut();
+        fuzzy_score_impl(
+            t,
+            pattern,
+            pattern_low,
+            pattern_start,
+            word,
+            word_low,
+            word_start,
+            options,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fuzzy_score_impl(
+    t: &mut Tables,
+    pattern: &[u16],
+    pattern_low: &[u16],
+    pattern_start: usize,
+    word: &[u16],
+    word_low: &[u16],
+    word_start: usize,
+    options: FuzzyScoreOptions,
+) -> Option<FuzzyScore> {
+    let pattern_len = pattern.len().min(MAX_LEN);
+    let word_len = word.len().min(MAX_LEN);
+
+    if pattern_start >= pattern_len
+        || word_start >= word_len
+        || (pattern_len - pattern_start) > (word_len - word_start)
+    {
+        return None;
+    }
+
+    // Stop early when the pattern's characters do not occur in order in the word.
+    if !is_pattern_in_word(
+        t,
+        pattern_low,
+        pattern_start,
+        pattern_len,
+        word_low,
+        word_start,
+        word_len,
+    ) {
+        return None;
+    }
+
+    // Find the max matching word position for each pattern position.
+    fill_in_max_word_match_pos(
+        t,
+        pattern_len,
+        word_len,
+        pattern_start,
+        word_start,
+        pattern_low,
+        word_low,
+    );
+
+    let mut has_strong_first_match = false;
+    let mut row = 1;
+    let mut column = 1;
+    let mut pattern_pos = pattern_start;
+    while pattern_pos < pattern_len {
+        // Reduce the search space to possible matching word positions.
+        let min_word_match_pos = t.min_word_match_pos[pattern_pos];
+        let max_word_match_pos = t.max_word_match_pos[pattern_pos];
+        let next_max_word_match_pos = if pattern_pos + 1 < pattern_len {
+            t.max_word_match_pos[pattern_pos + 1]
+        } else {
+            word_len
+        };
+
+        column = min_word_match_pos - word_start + 1;
+        let mut word_pos = min_word_match_pos;
+        while word_pos < next_max_word_match_pos {
+            let mut score = MIN_SCORE;
+            let mut can_come_diag = false;
+
+            if word_pos <= max_word_match_pos {
+                score = do_score(
+                    pattern,
+                    pattern_low,
+                    pattern_pos,
+                    pattern_start,
+                    word,
+                    word_low,
+                    word_pos,
+                    word_len,
+                    word_start,
+                    t.diag[row - 1][column - 1] == 0,
+                    &mut has_strong_first_match,
+                );
+            }
+
+            let mut diag_score = 0;
+            if score != MIN_SCORE {
+                can_come_diag = true;
+                diag_score = score + t.table[row - 1][column - 1];
+            }
+
+            let can_come_left = word_pos > min_word_match_pos;
+            let left_score = if can_come_left {
+                // Penalty for a gap start.
+                t.table[row][column - 1] + if t.diag[row][column - 1] > 0 { -5 } else { 0 }
+            } else {
+                0
+            };
+
+            let can_come_left_left =
+                word_pos > min_word_match_pos + 1 && t.diag[row][column - 1] > 0;
+            let left_left_score = if can_come_left_left {
+                t.table[row][column - 2] + if t.diag[row][column - 2] > 0 { -5 } else { 0 }
+            } else {
+                0
+            };
+
+            if can_come_left_left
+                && (!can_come_left || left_left_score >= left_score)
+                && (!can_come_diag || left_left_score >= diag_score)
+            {
+                // Prefer jumping over a diagonal: the match is earlier in the word.
+                t.table[row][column] = left_left_score;
+                t.arrows[row][column] = Arrow::LeftLeft as u8;
+                t.diag[row][column] = 0;
+            } else if can_come_left && (!can_come_diag || left_score >= diag_score) {
+                // Prefer left: the match is earlier in the word.
+                t.table[row][column] = left_score;
+                t.arrows[row][column] = Arrow::Left as u8;
+                t.diag[row][column] = 0;
+            } else if can_come_diag {
+                t.table[row][column] = diag_score;
+                t.arrows[row][column] = Arrow::Diag as u8;
+                t.diag[row][column] = t.diag[row - 1][column - 1] + 1;
+            } else {
+                unreachable!("not possible");
+            }
+            column += 1;
+            word_pos += 1;
+        }
+        row += 1;
+        pattern_pos += 1;
+    }
+
+    if !has_strong_first_match && !options.first_match_can_be_weak {
+        return None;
+    }
+
+    row -= 1;
+    column -= 1;
+
+    let mut result = FuzzyScore {
+        score: t.table[row][column],
+        word_start,
+        matches: Vec::new(),
+    };
+    let mut backwards_diag_length = 0;
+    let mut max_match_column = 0;
+
+    while row >= 1 {
+        // Find the column where we go diagonally up.
+        let mut diag_column = column as isize;
+        loop {
+            let arrow = t.arrows[row][diag_column as usize];
+            if arrow == Arrow::LeftLeft as u8 {
+                diag_column -= 2;
+            } else if arrow == Arrow::Left as u8 {
+                diag_column -= 1;
+            } else {
+                break;
+            }
+            if diag_column < 1 {
+                break;
+            }
+        }
+
+        // Overturn the forwards decision if keeping the backwards diagonal gives a better match.
+        if backwards_diag_length > 1
+            && pattern_low.get(pattern_start + row - 1) == word_low.get(word_start + column - 1)
+            && !is_upper_case_at_pos(diag_column + word_start as isize - 1, word, word_low)
+            && backwards_diag_length + 1 > t.diag[row][diag_column as usize]
+        {
+            diag_column = column as isize;
+        }
+
+        if diag_column == column as isize {
+            backwards_diag_length += 1;
+        } else {
+            backwards_diag_length = 1;
+        }
+
+        if max_match_column == 0 {
+            max_match_column = diag_column;
+        }
+
+        row -= 1;
+        column = (diag_column - 1).max(0) as usize;
+        result.matches.push(column);
+    }
+
+    if word_len - word_start == pattern_len && options.boost_full_match {
+        // The word matches the pattern with all characters.
+        result.score += 2;
+    }
+
+    // One penalty point per skipped character in the word.
+    result.score -= (max_match_column - pattern_len as isize) as i32;
+    Some(result)
+}
+
+fn fill_in_max_word_match_pos(
+    t: &mut Tables,
+    pattern_len: usize,
+    word_len: usize,
+    pattern_start: usize,
+    word_start: usize,
+    pattern_low: &[u16],
+    word_low: &[u16],
+) {
+    let mut pattern_pos = pattern_len as isize - 1;
+    let mut word_pos = word_len as isize - 1;
+    while pattern_pos >= pattern_start as isize && word_pos >= word_start as isize {
+        if at(pattern_low, pattern_pos) == at(word_low, word_pos) {
+            t.max_word_match_pos[pattern_pos as usize] = word_pos as usize;
+            pattern_pos -= 1;
+        }
+        word_pos -= 1;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn do_score(
+    pattern: &[u16],
+    pattern_low: &[u16],
+    pattern_pos: usize,
+    pattern_start: usize,
+    word: &[u16],
+    word_low: &[u16],
+    word_pos: usize,
+    word_len: usize,
+    word_start: usize,
+    new_match_start: bool,
+    out_first_match_strong: &mut bool,
+) -> i32 {
+    if pattern_low.get(pattern_pos) != word_low.get(word_pos) {
+        return MIN_SCORE;
+    }
+    let wp = word_pos as isize;
+    let exact = || pattern.get(pattern_pos) == word.get(word_pos);
+
+    let mut score = 1;
+    let mut is_gap_location = false;
+    if word_pos == pattern_pos - pattern_start {
+        // Common prefix: `foobar <-> foobaz`.
+        score = if exact() { 7 } else { 5 };
+    } else if is_upper_case_at_pos(wp, word, word_low)
+        && (word_pos == 0 || !is_upper_case_at_pos(wp - 1, word, word_low))
+    {
+        // Hitting upper-case: `foo <-> forOthers`.
+        score = if exact() { 7 } else { 5 };
+        is_gap_location = true;
+    } else if is_separator_at_pos(word_low, wp)
+        && (word_pos == 0 || !is_separator_at_pos(word_low, wp - 1))
+    {
+        // Hitting a separator: `. <-> foo.bar`.
+        score = 5;
+    } else if is_separator_at_pos(word_low, wp - 1) || is_whitespace_at_pos(word_low, wp - 1) {
+        // Post separator: `foo <-> bar_foo`.
+        score = 5;
+        is_gap_location = true;
+    }
+
+    if score > 1 && pattern_pos == pattern_start {
+        *out_first_match_strong = true;
+    }
+
+    if !is_gap_location {
+        is_gap_location = is_upper_case_at_pos(wp, word, word_low)
+            || is_separator_at_pos(word_low, wp - 1)
+            || is_whitespace_at_pos(word_low, wp - 1);
+    }
+
+    if pattern_pos == pattern_start {
+        // The first pattern character matching after the word start: penalize the gap.
+        if word_pos > word_start {
+            score -= if is_gap_location { 3 } else { 5 };
+        }
+    } else if new_match_start {
+        // The beginning of a new match, after a gap.
+        score += if is_gap_location { 2 } else { 0 };
+    } else {
+        // Part of a contiguous match: a small bonus unless it is a preferred gap location.
+        score += if is_gap_location { 0 } else { 1 };
+    }
+
+    if word_pos + 1 == word_len {
+        // Pretend there is a gap after the last character so that matching it is not favored.
+        score -= if is_gap_location { 3 } else { 5 };
+    }
+    score
+}
