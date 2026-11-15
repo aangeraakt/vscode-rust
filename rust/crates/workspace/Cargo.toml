@@ -1,0 +1,19 @@
+[package]
+name = "lathe-workspace"
+description = "Workspace services for Lathe: the disk file system provider, file watching and search."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vscode-api.workspace = true
+tokio = { version = "1", features = ["rt", "sync"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
